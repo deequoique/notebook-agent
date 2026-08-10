@@ -39,6 +39,9 @@ tenant, user, bot UUID, Telegram sender ID, or channel identity fields.
 
 - `/account/link` is nested below `ProtectedLayout`; unauthenticated direct access returns to `/login`.
 - Web-created tokens always target `telegram`. The UI displays `/link <token>` for a private Bot chat.
+- Both binding directions display `@notebook_agent_bot` and link to exactly
+  `https://t.me/notebook_agent_bot`. This public Bot URL never contains the link token, command, tenant,
+  sender identity, or another sensitive query parameter.
 - Telegram-created Web tokens are trimmed and checked only for non-empty/maximum length in the browser;
   the server owns token format, target, expiry, replay, and tenant merge validation.
 - Token response data and mutation variables use TanStack Mutation `gcTime: 0`. Replacing or unmounting
@@ -91,6 +94,8 @@ Frontend tests must assert:
   replacement client;
 - `/account/link` rejects unauthenticated direct access and renders for an authenticated session;
 - the account menu and page expose Telegram, not WeChat.
+- both direction cards expose the exact public Bot URL with safe external-link semantics, and generating a
+  link token never changes the Bot link or adds that token to its `href`.
 
 Run the full frontend gates: `pnpm test`, `pnpm typecheck`, `pnpm lint`, `pnpm build`, and
 `pnpm check:api`. Real Telegram Bot acceptance remains a redacted deployment smoke; automated fakes do

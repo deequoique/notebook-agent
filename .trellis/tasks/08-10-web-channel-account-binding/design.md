@@ -44,8 +44,11 @@ No backend schema change is required:
 Both calls remain unsafe same-origin mutations through `requestJson()`, which attaches credentials and
 the CSRF header. The browser never submits a tenant, user, bot UUID, sender ID, or channel identity ID.
 
-The response does not include `expires_at` or public Bot metadata. The UI therefore uses generic
-single-use/short-lived copy and does not implement an expiry countdown or Telegram deep link in this MVP.
+The response does not include `expires_at` or public Bot metadata. The deployment's public Bot identity is
+therefore an explicit frontend constant: `@notebook_agent_bot`, linked to
+`https://t.me/notebook_agent_bot`. The URL never includes a link token or other sensitive parameter. The
+UI uses generic single-use/short-lived copy and does not implement an expiry countdown, token-bearing deep
+link, or QR code in this MVP.
 
 ## 4. Frontend Architecture
 
@@ -76,12 +79,13 @@ replaced or when the feature unmounts.
 1. User explicitly requests a binding code.
 2. Web calls the create endpoint with `target_channel="telegram"`.
 3. UI displays the exact `/link <token>` command, a copy control, and instructions to send it in a private
-   chat with the configured Bot.
+   chat with `@notebook_agent_bot`, with a nearby external link that opens the Bot without putting the
+   token in the URL.
 4. Explicit regeneration replaces the visible code without claiming previous server-side revocation.
 
 ### Telegram to Web
 
-1. UI instructs the user to send `/link web` to the Bot.
+1. UI links to `@notebook_agent_bot` and instructs the user to send `/link web` in that Bot's private chat.
 2. User pastes the returned token into a labelled Web field.
 3. Pending submission disables duplicates; safe failures retain the draft. `link_merge_busy` remains
    retryable with the same token.

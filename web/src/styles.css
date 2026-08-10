@@ -188,6 +188,9 @@ h2 { line-height: 1.1; }
 .account-link-card .step-number { margin: 0 0 1rem; }
 .account-link-card h2 { margin-bottom: 0.65rem; font-size: clamp(1.35rem, 4vw, 1.85rem); }
 .account-link-card > p:not(.step-number) { color: var(--muted); line-height: 1.65; }
+.account-link-bot { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.32rem; margin: -0.15rem 0 0.8rem; font-size: 0.82rem; font-weight: 750; }
+.account-link-bot a { display: inline-flex; min-height: 44px; align-items: center; color: var(--accent-dark); text-underline-offset: 0.2rem; }
+.account-link-bot a:hover { color: var(--accent); }
 .account-link-card > .button { margin-top: 0.55rem; }
 .account-link-command { display: grid; gap: 0.65rem; margin-top: 1.1rem; padding: 1rem; border: 1px solid rgba(49, 94, 83, 0.2); border-radius: 0.9rem; background: rgba(49, 94, 83, 0.055); }
 .account-link-command p { margin: 0; color: var(--muted); font-size: 0.78rem; line-height: 1.55; }

@@ -5,6 +5,8 @@ import { ApiError, consumeLinkToken, createTelegramLinkToken } from "../api/clie
 import type { LinkTokenResponse, LinkedResponse } from "../api/contracts";
 
 const LINK_TOKEN_MAX_LENGTH = 128;
+const TELEGRAM_BOT_HANDLE = "@notebook_agent_bot";
+const TELEGRAM_BOT_URL = "https://t.me/notebook_agent_bot";
 
 interface AccountLinkPageProps {
   createToken?: () => Promise<LinkTokenResponse>;
@@ -124,6 +126,17 @@ export function AccountLinkPage({
           <p className="step-number" aria-hidden="true">01</p>
           <h2 id="account-link-web-title">从 Web 发起绑定</h2>
           <p>生成一次性绑定码，然后在配置好的 Telegram Bot 私聊中发送完整指令。</p>
+          <p className="account-link-bot">
+            Telegram Bot：
+            <a
+              href={TELEGRAM_BOT_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={`${TELEGRAM_BOT_HANDLE}（在新标签页打开）`}
+            >
+              {TELEGRAM_BOT_HANDLE}
+            </a>
+          </p>
           <button
             className="button button--primary button--wide"
             type="button"
@@ -162,7 +175,20 @@ export function AccountLinkPage({
         <section className="account-link-card" aria-labelledby="account-link-telegram-title">
           <p className="step-number" aria-hidden="true">02</p>
           <h2 id="account-link-telegram-title">从 Telegram 发起绑定</h2>
-          <p>先在 Telegram Bot 私聊中发送 <code>/link web</code>，再把 Bot 返回的绑定码粘贴到这里。</p>
+          <p>
+            先在 Telegram Bot 私聊中发送 <code>/link web</code>，再把 Bot 返回的绑定码粘贴到这里。
+          </p>
+          <p className="account-link-bot">
+            打开 Telegram Bot：
+            <a
+              href={TELEGRAM_BOT_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={`${TELEGRAM_BOT_HANDLE}（在新标签页打开）`}
+            >
+              {TELEGRAM_BOT_HANDLE}
+            </a>
+          </p>
           <form className="account-link-form" onSubmit={submitToken} noValidate>
             <div className="field">
               <label htmlFor="telegram-link-token">Telegram 绑定码</label>
