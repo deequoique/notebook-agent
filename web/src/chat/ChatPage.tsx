@@ -109,7 +109,10 @@ export function ChatPage({
     onSuccess: async (deletedThreadId) => {
       queryClient.setQueryData<ConversationHistoryPage>(["conversations"], (current) => {
         if (!current) return current;
-        return { ...current, items: current.items.filter((item) => item.thread_id !== deletedThreadId) };
+        return {
+          ...current,
+          items: (current.items ?? []).filter((item) => item.thread_id !== deletedThreadId),
+        };
       });
       setSelectedThreadId(null);
       setSelectedConversationId(null);
