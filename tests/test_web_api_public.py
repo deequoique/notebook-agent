@@ -36,7 +36,7 @@ def test_public_health_capabilities_and_openapi_are_safe():
         "transcript_pagination": True,
         "archive": True,
         "summary_generation": False,
-        "chat": False,
+        "chat": True,
     }
 
     assert openapi.status_code == 200
