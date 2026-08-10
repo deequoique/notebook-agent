@@ -47,7 +47,8 @@ if [[ ! -x $install_root/.venv/bin/python ]]; then
   python3 -m venv "$install_root/.venv"
 fi
 "$install_root/.venv/bin/python" -m pip install --quiet --upgrade pip
-"$install_root/.venv/bin/python" -m pip install --quiet "$wheel_path" langbot-plugin==0.4.13
+"$install_root/.venv/bin/python" -m pip install --quiet \
+  "$wheel_path" langbot-plugin==0.4.13 'mcp>=1.25,<2'
 
 staging=$(mktemp -d "$install_root/patched_site.XXXXXX")
 cleanup() {
