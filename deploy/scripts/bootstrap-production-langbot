@@ -25,6 +25,10 @@ if ! id notebook-langbot >/dev/null 2>&1; then
   echo "dedicated notebook-langbot service identity is missing" >&2
   exit 67
 fi
+if ! command -v setfacl >/dev/null 2>&1; then
+  echo "setfacl is required for the isolated LangBot data path" >&2
+  exit 69
+fi
 if [[ ! -f $app_env ]]; then
   echo "Notebook Agent runtime environment is missing" >&2
   exit 66
@@ -92,6 +96,10 @@ printf '%s\n' "$expected_wheel_sha" >"$install_root/.wheel-sha256-verified"
 chmod 0644 "$install_root/.wheel-sha256-verified"
 
 install -d -o notebook-langbot -g notebook-langbot -m 0700 "$data_root" "$data_root/plugins" "$plugin_root"
+# The existing Notebook Agent state root is intentionally not listable by the
+# LangBot identity. Grant only the directory-traverse bit needed to reach the
+# dedicated, mode-0700 LangBot subtree.
+setfacl -m u:notebook-langbot:--x /var/lib/notebook-agent
 cp -R "$release_root/integrations/langbot_kb_plugin/." "$plugin_root/"
 chown -R notebook-langbot:notebook-langbot "$plugin_root"
 find "$plugin_root" -type d -exec chmod 0700 {} +
