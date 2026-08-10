@@ -87,7 +87,7 @@ class CapabilitiesResponse(BaseModel):
     transcript_pagination: bool = True
     archive: bool = True
     summary_generation: bool = False
-    chat: bool = False
+    chat: bool = True
 
 
 @dataclass(frozen=True)

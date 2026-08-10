@@ -9,30 +9,40 @@ boundary.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import timedelta
-from typing import Annotated, Callable, Protocol
+from datetime import datetime, timedelta
+from typing import Annotated, Protocol
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, Security
+from fastapi import (
+    APIRouter,
+    Depends,
+    Header,
+    HTTPException,
+    Request,
+    Response,
+    Security,
+)
 from fastapi.security import APIKeyCookie
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
+from sqlalchemy import and_, delete, or_, select
 
 from app.agent.types import AgentAnswer
+from app.api.library_schemas import ErrorResponse
 from app.channels.errors import IdentityError
 from app.channels.identity import consume_link_token, create_link_token
 from app.channels.service import _link_failure
-from app.api.library_schemas import ErrorResponse
 from app.channels.types import ChannelEnvelope, TenantContext
-from app.models import AppUser, ChannelIdentity
+from app.models import AppUser, ChannelIdentity, ConversationThread, ConversationTurn
 from app.web.auth import CSRF_COOKIE_NAME, SESSION_COOKIE_NAME
 from app.web_auth import AuthenticatedWebSession
-
 
 _MAX_CONVERSATION_ID = 128
 _MAX_MESSAGE_ID = 128
 _MAX_MESSAGE_TEXT = 16_000
+_DEFAULT_HISTORY_LIMIT = 30
+_MAX_HISTORY_LIMIT = 50
 _PRIVATE_RESULT_KEYS = frozenset(
     {
         "id",
@@ -109,6 +119,51 @@ class ConversationResponse(BaseModel):
     action_results: list[dict] = Field(default_factory=list)
     thread_id: str | None = None
     error_code: str | None = None
+
+
+class ConversationHistoryItemResponse(BaseModel):
+    """A compact browser-safe projection for the conversation sidebar."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    thread_id: str
+    conversation_id: str
+    title: str
+    preview: str
+    updated_at: datetime
+
+
+class ConversationHistoryPageResponse(BaseModel):
+    """A bounded, opaque-cursor page of the current identity's threads."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[ConversationHistoryItemResponse] = Field(default_factory=list)
+    next_cursor: str | None = None
+
+
+class ConversationTurnResponse(BaseModel):
+    """One persisted public conversation turn without model/provider data."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    user_text: str
+    assistant_text: str
+    status: str
+    error_code: str | None = None
+    citations: list[ConversationCitationResponse] = Field(default_factory=list)
+    action_results: list[dict] = Field(default_factory=list)
+    created_at: datetime
+
+
+class ConversationTurnsResponse(BaseModel):
+    """The saved transcript for one thread owned by the current identity."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    thread_id: str
+    conversation_id: str
+    turns: list[ConversationTurnResponse] = Field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -226,6 +281,11 @@ def build_conversation_router(
             raise HTTPException(status_code=503, detail="request_failed")
         return channel_service
 
+    def history_store_or_unavailable():
+        if session_factory is None:
+            raise HTTPException(status_code=503, detail="request_failed")
+        return session_factory
+
     def browser_identity(session: object) -> BrowserSessionIdentity:
         if session_identity_resolver is not None:
             resolved = session_identity_resolver(session)
@@ -271,6 +331,57 @@ def build_conversation_router(
             return [_safe_result(item) for item in value]
         return value
 
+    def _safe_citations(value: object) -> list[ConversationCitationResponse]:
+        """Project persisted JSON through the same public citation boundary.
+
+        ``ConversationTurn.sources`` is intentionally flexible storage for the
+        Agent runtime.  Do not return it directly: historical rows can contain
+        internal retrieval identifiers alongside the user-facing citation.
+        """
+
+        if not isinstance(value, list):
+            return []
+        citations: list[ConversationCitationResponse] = []
+        for source in value:
+            if not isinstance(source, dict):
+                continue
+            title = source.get("title")
+            excerpt = source.get("excerpt")
+            url = source.get("url")
+            if not all(isinstance(item, str) for item in (title, excerpt, url)):
+                continue
+            start_sec = source.get("start_sec")
+            citations.append(
+                ConversationCitationResponse(
+                    title=title,
+                    excerpt=excerpt,
+                    url=url,
+                    start_sec=float(start_sec) if isinstance(start_sec, (int, float)) else None,
+                )
+            )
+        return citations
+
+    def _thread_item(thread: ConversationThread, latest_turn: ConversationTurn | None) -> ConversationHistoryItemResponse:
+        prompt = latest_turn.user_text.strip() if latest_turn is not None else ""
+        title = prompt[:80] or "新对话"
+        preview = (latest_turn.assistant_text.strip() if latest_turn is not None else "")[:160]
+        return ConversationHistoryItemResponse(
+            thread_id=thread.public_id,
+            conversation_id=thread.external_conversation_id,
+            title=title,
+            preview=preview,
+            updated_at=thread.updated_at,
+        )
+
+    def _owned_thread(db, identity: BrowserSessionIdentity, thread_id: str) -> ConversationThread | None:
+        return db.scalar(
+            select(ConversationThread).where(
+                ConversationThread.public_id == thread_id,
+                ConversationThread.app_user_id == identity.app_user_id,
+                ConversationThread.channel_identity_id == identity.tenant.channel_identity_id,
+            )
+        )
+
     def web_envelope(
         session: object,
         conversation_id: str,
@@ -288,6 +399,152 @@ def build_conversation_router(
             text,
             request_id=uuid4().hex,
         )
+
+    @router.get(
+        "/conversations",
+        response_model=ConversationHistoryPageResponse,
+        responses={
+            401: {"model": ErrorResponse},
+            404: {"model": ErrorResponse},
+            422: {"model": ErrorResponse},
+            503: {"model": ErrorResponse},
+        },
+    )
+    def list_conversations(
+        limit: int = _DEFAULT_HISTORY_LIMIT,
+        cursor: str | None = None,
+        session: object = Depends(authenticated_session),
+    ) -> ConversationHistoryPageResponse:
+        if not 1 <= limit <= _MAX_HISTORY_LIMIT:
+            raise HTTPException(status_code=422, detail="validation_error")
+        identity = browser_identity(session)
+        factory = history_store_or_unavailable()
+        with factory() as db:
+            filters = (
+                ConversationThread.app_user_id == identity.app_user_id,
+                ConversationThread.channel_identity_id == identity.tenant.channel_identity_id,
+            )
+            statement = select(ConversationThread).where(*filters)
+            if cursor:
+                cursor_thread = _owned_thread(db, identity, cursor)
+                if cursor_thread is None:
+                    raise HTTPException(status_code=404, detail="not_found")
+                statement = statement.where(
+                    or_(
+                        ConversationThread.updated_at < cursor_thread.updated_at,
+                        and_(
+                            ConversationThread.updated_at == cursor_thread.updated_at,
+                            ConversationThread.id < cursor_thread.id,
+                        ),
+                    )
+                )
+            threads = list(
+                db.scalars(
+                    statement.order_by(
+                        ConversationThread.updated_at.desc(), ConversationThread.id.desc()
+                    ).limit(limit + 1)
+                )
+            )
+            page_threads = threads[:limit]
+            items = []
+            for thread in page_threads:
+                latest_turn = db.scalar(
+                    select(ConversationTurn)
+                    .where(
+                        ConversationTurn.thread_id == thread.id,
+                        ConversationTurn.status == "completed",
+                    )
+                    .order_by(ConversationTurn.created_at.desc(), ConversationTurn.id.desc())
+                    .limit(1)
+                )
+                items.append(_thread_item(thread, latest_turn))
+            return ConversationHistoryPageResponse(
+                items=items,
+                next_cursor=page_threads[-1].public_id if len(threads) > limit else None,
+            )
+
+    @router.get(
+        "/conversations/{thread_id}/turns",
+        response_model=ConversationTurnsResponse,
+        responses={
+            401: {"model": ErrorResponse},
+            404: {"model": ErrorResponse},
+            422: {"model": ErrorResponse},
+            503: {"model": ErrorResponse},
+        },
+    )
+    def get_conversation_turns(
+        thread_id: str,
+        session: object = Depends(authenticated_session),
+    ) -> ConversationTurnsResponse:
+        identity = browser_identity(session)
+        factory = history_store_or_unavailable()
+        with factory() as db:
+            thread = _owned_thread(db, identity, thread_id)
+            if thread is None:
+                raise HTTPException(status_code=404, detail="not_found")
+            turns = list(
+                db.scalars(
+                    select(ConversationTurn)
+                    .where(
+                        ConversationTurn.thread_id == thread.id,
+                        ConversationTurn.status == "completed",
+                    )
+                    .order_by(ConversationTurn.created_at, ConversationTurn.id)
+                )
+            )
+            return ConversationTurnsResponse(
+                thread_id=thread.public_id,
+                conversation_id=thread.external_conversation_id,
+                turns=[
+                    ConversationTurnResponse(
+                        user_text=turn.user_text,
+                        assistant_text=turn.assistant_text,
+                        status=turn.answer_status,
+                        error_code=turn.error_code,
+                        citations=_safe_citations(turn.sources),
+                        action_results=[_safe_result(value) for value in turn.action_results]
+                        if isinstance(turn.action_results, list)
+                        else [],
+                        created_at=turn.created_at,
+                    )
+                    for turn in turns
+                ],
+            )
+
+    @router.delete(
+        "/conversations/{thread_id}",
+        status_code=204,
+        response_class=Response,
+        responses={
+            401: {"model": ErrorResponse},
+            404: {"model": ErrorResponse},
+            422: {"model": ErrorResponse},
+            503: {"model": ErrorResponse},
+        },
+    )
+    def delete_conversation(
+        thread_id: str,
+        _csrf_token: CsrfHeader,
+        session: object = Depends(authenticated_session),
+    ) -> Response:
+        """Permanently remove one thread owned by the current web identity."""
+
+        identity = browser_identity(session)
+        factory = history_store_or_unavailable()
+        with factory() as db:
+            thread = _owned_thread(db, identity, thread_id)
+            if thread is None:
+                # Do not disclose whether this public ID belongs to another
+                # app user or a linked channel identity.
+                raise HTTPException(status_code=404, detail="not_found")
+            # The production foreign key also cascades this deletion.  Delete
+            # turns explicitly so the durable deletion stays correct in
+            # lightweight SQLite/test deployments where FK enforcement is off.
+            db.execute(delete(ConversationTurn).where(ConversationTurn.thread_id == thread.id))
+            db.delete(thread)
+            db.commit()
+        return Response(status_code=204)
 
     @router.post(
         "/conversations/{conversation_id}/messages",
@@ -440,15 +697,19 @@ def build_conversation_router(
 
 
 __all__ = [
+    "BrowserSessionIdentity",
+    "BrowserSessionIdentityResolver",
     "ConsumeLinkTokenInput",
     "ConversationCitationResponse",
+    "ConversationHistoryItemResponse",
+    "ConversationHistoryPageResponse",
     "ConversationResponse",
+    "ConversationTurnResponse",
+    "ConversationTurnsResponse",
     "LinkTokenInput",
     "LinkTokenResponse",
     "LinkedResponse",
     "MessageInput",
-    "BrowserSessionIdentity",
-    "BrowserSessionIdentityResolver",
     "build_conversation_router",
     "resolve_browser_session_identity",
 ]

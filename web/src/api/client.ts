@@ -16,6 +16,9 @@ import type {
   LegacyLoginChannel,
   SessionInfo,
   TranscriptPage,
+  ConversationHistoryPage,
+  ConversationResponse,
+  ConversationTurns,
 } from "./contracts";
 
 export class ApiError extends Error {
@@ -160,6 +163,38 @@ export function consumeLinkToken(token: string): Promise<LinkedResponse> {
 
 export function getCapabilities(): Promise<Capabilities> {
   return requestJson("/api/v1/capabilities");
+}
+
+export function listConversations(cursor?: string | null): Promise<ConversationHistoryPage> {
+  const params = new URLSearchParams({ limit: "30" });
+  if (cursor) params.set("cursor", cursor);
+  return requestJson(`/api/v1/conversations?${params.toString()}`);
+}
+
+export function getConversationTurns(threadId: string): Promise<ConversationTurns> {
+  return requestJson(`/api/v1/conversations/${encodeURIComponent(threadId)}/turns`);
+}
+
+export function deleteConversation(threadId: string): Promise<void> {
+  return requestJson(`/api/v1/conversations/${encodeURIComponent(threadId)}`, {
+    method: "DELETE",
+  });
+}
+
+export function sendConversationMessage(
+  conversationId: string,
+  input: { message_id: string; text: string },
+): Promise<ConversationResponse> {
+  return requestJson(`/api/v1/conversations/${encodeURIComponent(conversationId)}/messages`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function resetConversation(conversationId: string): Promise<ConversationResponse> {
+  return requestJson(`/api/v1/conversations/${encodeURIComponent(conversationId)}/reset`, {
+    method: "POST",
+  });
 }
 
 export interface LibraryQuery {

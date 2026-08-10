@@ -14,6 +14,7 @@ import { LibraryEmptyState, LibraryErrorState, LibraryLoadingState } from "./Lib
 import { estimateWorkItemProgress, isLibraryWorkItem, shouldPollLibrary } from "./lifecycle";
 import { collectSearchSuggestions } from "./searchSuggestions";
 import { VideoCard } from "./VideoCard";
+import { RouteLink } from "../app/RouteTransition";
 
 interface LibraryPageProps {
   fetchItems?: (query: LibraryQuery) => Promise<LibraryPageResponse>;
@@ -124,13 +125,16 @@ export function LibraryPage({
           <h1>我的视频资料库</h1>
           <p>添加视频后，系统会自动整理视频信息、章节和字幕。</p>
         </div>
-        <button
-          className="button button--primary"
-          disabled={saveDisabled}
-          onClick={() => setDialogOpen(true)}
-        >
-          {saveDisabled ? "暂时无法添加视频" : "添加视频"}
-        </button>
+        <div className="library-heading__actions">
+          <RouteLink className="button button--quiet" to="/chat">AI 智能检索</RouteLink>
+          <button
+            className="button button--primary"
+            disabled={saveDisabled}
+            onClick={() => setDialogOpen(true)}
+          >
+            {saveDisabled ? "暂时无法添加视频" : "添加视频"}
+          </button>
+        </div>
       </section>
 
       <section className="library-toolbar" aria-label="资料库筛选">
