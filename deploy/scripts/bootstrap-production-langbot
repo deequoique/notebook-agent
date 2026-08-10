@@ -5,7 +5,8 @@ readonly expected_wheel_sha=ee950fd6a687cb8c7cfe646d2b9a92cfbf09b3ddfbaf8f43ea06
 readonly wheel_path=${1:-}
 readonly release_root=${2:-/opt/notebook-agent/current}
 readonly install_root=/opt/notebook-agent/shared/langbot
-readonly data_root=/var/lib/notebook-agent/langbot/data
+readonly langbot_root=/var/lib/notebook-agent/langbot
+readonly data_root=$langbot_root/data
 readonly plugin_root=$data_root/plugins/notebook-agent__notebook-knowledge-agent
 readonly app_env=/etc/notebook-agent/notebook-agent.env
 
@@ -95,7 +96,8 @@ staging=
 printf '%s\n' "$expected_wheel_sha" >"$install_root/.wheel-sha256-verified"
 chmod 0644 "$install_root/.wheel-sha256-verified"
 
-install -d -o notebook-langbot -g notebook-langbot -m 0700 "$data_root" "$data_root/plugins" "$plugin_root"
+install -d -o notebook-langbot -g notebook-langbot -m 0700 \
+  "$langbot_root" "$data_root" "$data_root/plugins" "$plugin_root"
 # The existing Notebook Agent state root is intentionally not listable by the
 # LangBot identity. Grant only the directory-traverse bit needed to reach the
 # dedicated, mode-0700 LangBot subtree.

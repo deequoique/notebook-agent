@@ -79,6 +79,7 @@ def test_private_gateway_and_langbot_units_are_isolated_and_telegram_only():
     assert "ee950fd6a687cb8c7cfe646d2b9a92cfbf09b3ddfbaf8f43ea0613905d3ffbff" in bootstrap
     assert "'mcp>=1.25,<2'" in bootstrap
     assert "setfacl -m u:notebook-langbot:--x /var/lib/notebook-agent" in bootstrap
+    assert '"$langbot_root" "$data_root" "$data_root/plugins" "$plugin_root"' in bootstrap
 
     assert "5300" not in caddy
     assert "8765" not in caddy
