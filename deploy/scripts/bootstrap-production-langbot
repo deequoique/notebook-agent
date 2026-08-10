@@ -93,6 +93,9 @@ if [[ -d $install_root/patched_site ]]; then
 fi
 mv "$staging" "$install_root/patched_site"
 staging=
+chown -R root:notebook-langbot "$install_root/patched_site"
+find "$install_root/patched_site" -type d -exec chmod 0750 {} +
+find "$install_root/patched_site" -type f -exec chmod 0640 {} +
 printf '%s\n' "$expected_wheel_sha" >"$install_root/.wheel-sha256-verified"
 chmod 0644 "$install_root/.wheel-sha256-verified"
 

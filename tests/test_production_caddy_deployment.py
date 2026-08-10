@@ -80,6 +80,9 @@ def test_private_gateway_and_langbot_units_are_isolated_and_telegram_only():
     assert "'mcp>=1.25,<2'" in bootstrap
     assert "setfacl -m u:notebook-langbot:--x /var/lib/notebook-agent" in bootstrap
     assert '"$langbot_root" "$data_root" "$data_root/plugins" "$plugin_root"' in bootstrap
+    assert 'chown -R root:notebook-langbot "$install_root/patched_site"' in bootstrap
+    assert 'find "$install_root/patched_site" -type d -exec chmod 0750 {} +' in bootstrap
+    assert 'find "$install_root/patched_site" -type f -exec chmod 0640 {} +' in bootstrap
 
     assert "5300" not in caddy
     assert "8765" not in caddy
