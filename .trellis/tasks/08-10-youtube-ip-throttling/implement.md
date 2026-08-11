@@ -81,25 +81,33 @@
 
 ## 6. Production rollout
 
-- [ ] Deploy the reviewed release through the existing production release
+- [x] Deploy the reviewed release through the existing production release
       process; do not edit an immutable release in place.
-- [ ] Back up and update only the root-owned production environment entry for
+- [x] Back up and update only the root-owned production environment entry for
       `YOUTUBE_PROXY_URL=http://127.0.0.1:18080` after the helper is healthy.
-- [ ] Restart only `notebook-agent-worker` and verify the combined service,
+- [x] Restart only `notebook-agent-worker` and verify the combined service,
       worker, Beat, Redis, MinIO, Web, and MCP remain healthy.
-- [ ] Submit one public canary and verify safe metadata/subtitle/ready evidence;
-      then retry at most one user-selected failed item.
-- [ ] Stop on proxy error, 429, bot challenge, 403, unexpected egress, or any
+- [x] Run a public connector canary from the deployed release under the same
+      systemd environment file as the Worker and verify safe metadata plus a
+      non-empty bounded subtitle body.
+- [ ] Run one temporary full-ingestion canary through the real queue, Worker,
+      MinIO, and Embedding path; validate `ready`, raw-object/content-hash,
+      segment timings, and embeddings, then remove its isolated test data.
+      The operator explicitly skipped this production-data mutation on
+      2026-08-10 and will test a normal item manually. No user-selected failed
+      item was supplied for an assistant-run retry.
+- [x] Stop on proxy error, 429, bot challenge, 403, unexpected egress, or any
       credential/content leakage; do not fan out across more jobs.
 
 ## 7. Rollback and handoff
 
 - [ ] Remove/disable `YOUTUBE_PROXY_URL`, restart only the worker, and confirm
       unrelated services/data remain unchanged.
-- [ ] Stop the foreground Mac helper and confirm both loopback listeners are
-      gone.
+- [x] During a bounded fail-closed rehearsal, stop the foreground Mac helper
+      and confirm both loopback listeners are gone; restore the helper and
+      repeat the successful public connector canary immediately afterward.
 - [x] Record the exact start/stop/retry procedure, the on-demand availability
       limitation, and the fact that direct YouTube recovery is not guaranteed
       after rollback.
-- [ ] Run Trellis check/update-spec/commit/finish steps only after production
-      validation or an explicitly documented rollback.
+- [ ] Run Trellis check/update-spec/commit/finish steps after recording the
+      operator-approved full-ingestion test exception.

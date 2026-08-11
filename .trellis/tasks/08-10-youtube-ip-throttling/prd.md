@@ -25,8 +25,9 @@ the final planning summary.
   evidence is in `research/current-production-evidence.md`.
 - The user confirmed that public subtitle acquisition succeeds on their own
   Mac and selected that computer as the temporary acquisition egress.
-- The Mac runs macOS 15.7.7 on arm64, has Homebrew and OpenSSH 9.9, and does not
-  currently have `tinyproxy` installed.
+- At planning time the Mac ran macOS 15.7.7 on arm64, had Homebrew and OpenSSH
+  9.9, and did not yet have `tinyproxy` installed. It was installed later only
+  after the separately approved operator step recorded in `validation.md`.
 - The production server runs OpenSSH 9.6. Its effective configuration reports
   `AllowTcpForwarding yes`, `GatewayPorts no`, and `PermitOpen any`. A remote
   forward can therefore listen on server loopback without opening a public
@@ -34,11 +35,10 @@ the final planning summary.
 - Tailscale is not part of the chosen solution: the Mac installation is not
   usable in the current CLI context, and the correct production server has no
   configured Tailscale path.
-- `YouTubeConnector` makes two separate outbound operations: yt-dlp resolves
-  metadata and a signed subtitle URL (`app/connectors/youtube.py:80-106`), then
-  a bounded Python child downloads the subtitle body
-  (`app/connectors/youtube.py:108-131`,
-  `app/connectors/bounded_fetch.py:47-81`). Both must use the same home egress.
+- `YouTubeConnector` makes two separate outbound operations: `_run()` invokes
+  yt-dlp to resolve metadata and a signed subtitle URL, then
+  `_download_subtitle()` invokes `app.connectors.bounded_fetch` to download the
+  subtitle body. Both must use the same home egress.
 - The worker initializes trusted CA variables before connector construction
   (`app/ingest/tasks.py:182-192`). Any child-specific proxy environment must
   preserve `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` as required by
@@ -102,30 +102,30 @@ residential pools is retained in
 
 ## Acceptance criteria
 
-- [ ] A preflight confirms Mac loopback proxy availability, SSH key access to
+- [x] A preflight confirms Mac loopback proxy availability, SSH key access to
       `ubuntu@51.79.159.110`, and that the selected remote loopback port is free
       before starting either long-running process.
-- [ ] While the helper is running, the proxy-observed public egress differs
+- [x] While the helper is running, the proxy-observed public egress differs
       from the production server's direct egress without exposing either value
       in application logs.
-- [ ] Unit tests prove yt-dlp and the bounded subtitle child receive the same
+- [x] Unit tests prove yt-dlp and the bounded subtitle child receive the same
       configured proxy, retain both verified CA variables, and leave the parent
       process environment unchanged.
-- [ ] Unit/integration tests prove missing tunnel, malformed/non-loopback proxy
+- [x] Unit/integration tests prove missing tunnel, malformed/non-loopback proxy
       configuration, timeout, and provider 429 do not trigger an unproxied
       request and produce stable privacy-safe outcomes.
 - [ ] A public production canary obtains both metadata and a non-empty bounded
       subtitle body through the home egress, then reaches `ready` with a raw
       object key, content hash, segments, valid timings, and valid embeddings.
-- [ ] The existing production-IP canary can remain 429-limited without
+- [x] The existing production-IP canary can remain 429-limited without
       preventing the home-egress canary from succeeding.
-- [ ] Database, Redis, MinIO, embedding, email, Web, MCP, and Caddy traffic do
+- [x] Database, Redis, MinIO, embedding, email, Web, MCP, and Caddy traffic do
       not receive the YouTube proxy setting and continue using their existing
       routes.
 - [ ] Stopping the SSH tunnel causes a bounded proxy-unavailable failure rather
       than direct fallback; restarting the helper and explicitly retrying the
       item can recover it without creating a duplicate item.
-- [ ] The Mac and server expose no new public listener, and proxy/tunnel
+- [x] The Mac and server expose no new public listener, and proxy/tunnel
       processes terminate on operator stop without persistent startup entries.
 - [ ] Rollback restores the previous worker configuration and leaves all
       durable application data unchanged.
