@@ -319,18 +319,18 @@ CHANNEL_GATEWAY_URL=http://127.0.0.1:8765/v1/messages
 KB_BOT_CHANNELS={"telegram-bot-uuid":"telegram","wechat-bot-uuid":"wechat"}
 ```
 
-`KB_BOT_CHANNELS` 的 key 是 LangBot bot UUID，不是 Telegram 用户 ID、微信昵称或 `AppUser.id`。bridge pipeline 还必须显式绑定 required plugin；完整步骤见[部署手册的 LangBot 章节](deployment.md#7-安装-langbot-桥接可选)。
+`KB_BOT_CHANNELS` 的 key 是 LangBot bot UUID，不是 Telegram 用户 ID、微信昵称或 `AppUser.id`。bridge pipeline 还必须显式绑定 required plugin；完整步骤见[部署手册的 LangBot 章节](../deployment/README.md#7-安装-langbot-桥接可选)。
 
 ## E. Same-origin Web library
 
 The OVHcloud/Caddy production shape, combined Web/MCP unit,
 restricted GitHub approval flow, and rollback boundaries are documented in
-[`ovh-caddy-production.md`](ovh-caddy-production.md).
+[`ovh-caddy.md`](../deployment/production/ovh-caddy.md).
 
 这是浏览器端视频资料库的运行入口。`web/` 已经是一个独立的私有 React 应用包，
 不是需要发布到 npm 的组件库。它可以由 Python `web-server` 直接提供，也可以由独立
 静态服务提供；两种模式都必须让浏览器只看到一个 public origin，并把 `/api/v1/*`
-路由到 Python API。完整边界与代理示例见[前端独立部署说明](frontend-deployment.md)。
+路由到 Python API。完整边界与代理示例见[前端独立部署说明](../deployment/frontend.md)。
 
 Web 登录码必须由场景 D 中启用的 Telegram 或微信渠道批准；仅构建前端页面不能替代真实登录渠道。新增视频、失败重试和后台 ingestion 还需要场景 B 的 Redis、MinIO、worker 与 beat。
 
@@ -583,4 +583,4 @@ HTTP 模式不设置固定 `MCP_TOKEN`；每个请求携带自己的 bearer gran
 6. Web 运行 OpenAPI check、frontend tests/build，检查 `/api/v1/health`、`/login`、`/library` 和详情页直接刷新；未知 `/api/*` 必须返回 JSON 404。
 7. LangBot 先检查 gateway health，再确认 required plugin 为 `initialized`，最后做真实渠道 smoke。
 
-更完整的启动顺序、systemd、日志、备份、回滚和故障处理见[部署手册](deployment.md)。
+更完整的启动顺序、systemd、日志、备份、回滚和故障处理见[部署手册](../deployment/README.md)。

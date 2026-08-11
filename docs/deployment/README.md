@@ -6,7 +6,7 @@ Telegram/微信 adapter 与薄桥接插件。
 真实平台验收步骤另见 Trellis 任务中的 `manual-acceptance.md`。
 
 如果当前目标只是配置 `.env`、MCP 或可选 LangBot bridge，请先阅读
-[环境配置指南](environment-configuration.md)。本手册保留拓扑、启动顺序、systemd、
+[环境配置指南](../getting-started/configuration.md)。本手册保留拓扑、启动顺序、systemd、
 日志、备份、回滚和故障排查等运维流程。
 
 ## 1. 部署拓扑
@@ -170,7 +170,7 @@ cd ..
 ```
 
 不要从这份长手册逐项猜测 `.env`。先打开
-[环境配置指南](environment-configuration.md)，选择一个运行场景并复制对应的最小配置：
+[环境配置指南](../getting-started/configuration.md)，选择一个运行场景并复制对应的最小配置：
 
 - 本地只读/stdio MCP：PostgreSQL、embedding、Agent provider；不需要 Redis、MinIO 或 worker。
 - 完整 MCP：再加入 Redis、MinIO、Celery worker/beat 和 management feature flags。
@@ -180,7 +180,7 @@ cd ..
   和同源 TLS reverse proxy；前端 production build 由 `WEB_STATIC_DIR` 提供。
 
 前端部署优先核对以下 Web 和共享依赖变量；完整环境 profile 与变量字典仍以
-[环境配置指南](environment-configuration.md)为准：
+[环境配置指南](../getting-started/configuration.md)为准：
 
 | 配置 | 必需 | 说明 |
 | --- | --- | --- |
@@ -431,7 +431,7 @@ stop only its Beat entry and preserve PostgreSQL event/ledger rows; do not drain
 ### 6.3 同源 Web 视频资料库
 
 `web/` 是一个可独立构建和部署的私有前端应用包，不是 npm 组件库。详细的 bundled、
-split-service 和回滚契约见[前端独立部署说明](frontend-deployment.md)。
+split-service 和回滚契约见[前端独立部署说明](frontend.md)。
 
 Bundled 模式下，Web 前端必须先完成 production build，并与 FastAPI 从同一个 browser origin 提供：
 
@@ -750,7 +750,7 @@ LangBot。不要先启动 adapter 试图“等它自己恢复”。
 下面的内联示例管理 Notebook Agent gateway；LangBot 按其部署方式单独管理。把路径和用户
 改成实际值，并把 secret 文件权限设为 `0600`。独立静态前端 + API-only Web 的可安装
 Nginx 与 systemd 模板位于 `deploy/nginx/` 和 `deploy/systemd/notebook-agent-web*.service`，
-完整构建、原子切换、TLS、smoke 与回滚步骤见 [Frontend deployment](frontend-deployment.md)。
+完整构建、原子切换、TLS、smoke 与回滚步骤见 [Frontend deployment](frontend.md)。
 
 ```ini
 [Unit]

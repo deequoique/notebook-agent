@@ -81,7 +81,7 @@ The public reverse proxy must:
 - keep the channel gateway private and never expose its loopback port.
 
 The backend profile must also keep the per-item ingestion limits documented in
-`docs/environment-configuration.md`. They are enforced before raw-object writes
+`docs/getting-started/configuration.md`. They are enforced before raw-object writes
 and provider calls; changing the frontend upload form does not raise those
 server-side ceilings.
 
@@ -280,7 +280,7 @@ The local `/api/v1/health` check proves only that the Web process is alive; it i
 not full dependency readiness. Before enabling save/retry, also confirm the
 database is at `f1a2b3c4d5e6`, Redis answers `PONG` with the documented AOF
 settings, MinIO is ready, and the expected Celery worker/beat queues are active,
-using the commands in [the main deployment runbook](deployment.md#61-readiness-与-celery-worker).
+using the commands in [the main deployment runbook](README.md#61-readiness-与-celery-worker).
 `After=docker.service` in the unit controls startup order only and is not a
 readiness guarantee.
 
