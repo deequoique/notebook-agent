@@ -32,7 +32,7 @@ from app.ingest.tasks import (
     publish_ingest_dispatch,
     run_isolated_batch,
 )
-from app.models import AppUser, ContentItem, IngestDispatch
+from app.models import AppUser, BrowserCapture, ContentItem, IngestDispatch, Segment
 from app.tls import TLSConfigurationError, TrustedCA
 
 
@@ -281,6 +281,108 @@ def test_worker_fetches_and_persists_metadata_before_text():
     assert item.duration_sec == 42
     assert item.tags == ["worker"]
     assert item.state == "needs_asr"
+
+
+def test_browser_capture_without_captions_goes_to_needs_asr_without_remote_fetch(monkeypatch):
+    item = type("Item", (), {"id": 41, "state": "pending", "text_source": "none"})()
+    capture = type("Capture", (), {"caption_status": "unavailable"})()
+    statements = []
+
+    class DB:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def get(self, _model, _item_id): return item
+        def scalar(self, statement):
+            statements.append(str(statement))
+            return capture
+        def commit(self): return None
+
+    monkeypatch.setattr("app.ingest.tasks._connector", lambda _url: pytest.fail("capture path must not use the remote connector"))
+    state = process_item(item.id, session_factory=lambda: DB())
+
+    assert state == "needs_asr"
+    assert item.text_source == "none"
+    assert "ingest_dispatch.state" in statements[0]
+
+
+def test_browser_capture_with_captions_reuses_object_and_existing_worker(monkeypatch):
+    item = type(
+        "Item",
+        (),
+        {
+            "id": 41,
+            "user_id": 7,
+            "platform": "ntu_kaltura",
+            "platform_id": "123456_abCd",
+            "url": "https://ntulearnvideo.ntu.edu.sg/media/123456_abCd",
+            "chapters": [],
+            "state": "pending",
+            "raw_object_key": None,
+            "raw_format": "json3",
+            "content_hash": None,
+            "text_source": "none",
+            "lang": None,
+            "fail_reason": None,
+            "deleted_at": None,
+            "purge_claimed_at": None,
+        },
+    )()
+    capture = type(
+        "Capture",
+        (),
+        {
+            "caption_status": "available",
+            "caption_source": "official_cc",
+            "language": "en",
+            "raw_object_key": "7/ntu_kaltura/123456_abCd/hash.capture.json",
+        },
+    )()
+    added = []
+
+    class DB:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def get(self, model, _item_id):
+            assert model is ContentItem
+            return item
+        def scalar(self, _statement): return capture
+        def commit(self): return None
+        def refresh(self, _value): return None
+        def execute(self, _statement): return None
+        def add(self, value): added.append(value)
+
+    body = json.dumps(
+        {
+            "schema_version": "capture-transcript.v1",
+            "cues": [{"start_sec": 0, "end_sec": 2, "text": "lecture text"}],
+        }
+    ).encode()
+
+    class Store:
+        def __init__(self): self.gets = []
+        def get(self, key, *, max_bytes):
+            self.gets.append((key, max_bytes))
+            return body
+        def put(self, *_args): pytest.fail("captured object must not be uploaded twice")
+
+    class Embedder:
+        def embed(self, values): return [[1.0, 0.0] for _ in values]
+
+    store = Store()
+    monkeypatch.setattr("app.ingest.tasks._connector", lambda _url: pytest.fail("captured content must not call a remote connector"))
+    state = process_item(
+        item.id,
+        embedder=Embedder(),
+        object_store=store,
+        session_factory=lambda: DB(),
+    )
+
+    assert state == "ready"
+    assert item.raw_object_key == capture.raw_object_key
+    assert item.raw_format == "capture_v1"
+    assert item.text_source == "official_cc"
+    assert any(isinstance(value, Segment) for value in added)
+    assert len(store.gets) == 1
 
 
 @pytest.mark.parametrize(

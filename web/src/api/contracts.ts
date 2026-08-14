@@ -18,6 +18,10 @@ export type LinkTokenResponse = Schemas["LinkTokenResponse"];
 export type ConsumeLinkTokenInput = Schemas["ConsumeLinkTokenInput"];
 export type LinkedResponse = Schemas["LinkedResponse"];
 
+export type BrowserDevice = Schemas["BrowserDeviceResponse"];
+export type BrowserDeviceList = Schemas["BrowserDeviceListResponse"];
+export type PairingApproval = Schemas["PairingApprovalResponse"];
+
 export type BatchSubmitInput = Schemas["BatchSaveRequest"];
 export type BatchSubmitItem = Schemas["BatchItemResponse"];
 export type BatchSubmitResponse = Schemas["BatchSaveResponse"];

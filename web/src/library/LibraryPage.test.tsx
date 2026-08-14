@@ -34,6 +34,7 @@ function renderPage(fetchItems: () => Promise<LibraryPageResponse>) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const capabilities: Capabilities = {
     supported_platforms: ["youtube"],
+    browser_companion: true,
     web_login_channels: ["telegram"],
     save_enabled: true,
     max_save_batch_size: 10,

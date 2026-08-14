@@ -67,6 +67,15 @@ def _env_channels(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
     return channels
 
 
+def _env_csv(name: str, default: tuple[str, ...] = ()) -> tuple[str, ...]:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return tuple(
+        dict.fromkeys(part.strip() for part in value.split(",") if part.strip())
+    )
+
+
 def _require(name: str) -> str:
     value = os.environ.get(name)
     if not value:
@@ -485,6 +494,24 @@ class Settings:
     web_public_origin: str | None = field(
         default_factory=lambda: _env("WEB_PUBLIC_ORIGIN")
     )
+    browser_companion_allowed_origins: tuple[str, ...] = field(
+        default_factory=lambda: _env_csv("BROWSER_COMPANION_ALLOWED_ORIGINS")
+    )
+    browser_companion_pairing_ttl_seconds: int = field(
+        default_factory=lambda: _env_int(
+            "BROWSER_COMPANION_PAIRING_TTL_SECONDS", 600
+        )
+    )
+    browser_companion_grant_ttl_seconds: int = field(
+        default_factory=lambda: _env_int(
+            "BROWSER_COMPANION_GRANT_TTL_SECONDS", 90 * 24 * 60 * 60
+        )
+    )
+    browser_companion_max_request_bytes: int = field(
+        default_factory=lambda: _env_int(
+            "BROWSER_COMPANION_MAX_REQUEST_BYTES", 5_500_000
+        )
+    )
     web_session_ttl_seconds: int = field(
         default_factory=lambda: _env_int("WEB_SESSION_TTL_SECONDS", 30 * 24 * 60 * 60)
     )
@@ -570,6 +597,9 @@ class Settings:
             self.web_auth_email_max_sends,
             self.web_auth_ip_window_seconds,
             self.web_auth_ip_max_sends,
+            self.browser_companion_pairing_ttl_seconds,
+            self.browser_companion_grant_ttl_seconds,
+            self.browser_companion_max_request_bytes,
         )
         if (
             any(value <= 0 for value in positive_web_values)
@@ -577,6 +607,22 @@ class Settings:
             or self.smtp_timeout_seconds <= 0
         ):
             raise ValueError("Web authentication durations and limits must be positive")
+        for extension_origin in self.browser_companion_allowed_origins:
+            parsed_extension = urlsplit(extension_origin)
+            extension_id = parsed_extension.netloc
+            if (
+                parsed_extension.scheme != "chrome-extension"
+                or len(extension_id) != 32
+                or any(character not in "abcdefghijklmnop" for character in extension_id)
+                or parsed_extension.path
+                or parsed_extension.query
+                or parsed_extension.fragment
+                or extension_origin.endswith("/")
+            ):
+                raise ValueError(
+                    "BROWSER_COMPANION_ALLOWED_ORIGINS must contain exact "
+                    "chrome-extension origins"
+                )
         if self.web_auth_enabled:
             parsed_origin = urlsplit(self.web_public_origin or "")
             if (

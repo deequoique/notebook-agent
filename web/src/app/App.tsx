@@ -11,6 +11,7 @@ import {
 import { getSession, logout, setUnauthorizedHandler } from "../api/client";
 import type { SessionInfo } from "../api/contracts";
 import { AccountLinkPage } from "../account/AccountLinkPage";
+import { BrowserCompanionPage } from "../account/BrowserCompanionPage";
 import { LoginPage } from "../auth/LoginPage";
 import { ChatPage } from "../chat/ChatPage";
 import { LibraryPage } from "../library/LibraryPage";
@@ -142,6 +143,7 @@ function UnauthorizedBoundary({ rotateClient }: { rotateClient: () => void }) {
         <Route path="/chat" element={<ChatPage />} />
         <Route path="/videos/:id" element={<VideoDetailPage />} />
         <Route path="/account/link" element={<AccountLinkRoute rotateClient={rotateClient} />} />
+        <Route path="/account/browser-companion" element={<BrowserCompanionPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

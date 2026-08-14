@@ -1203,7 +1203,9 @@ def build_agent(
         def list_saved_items(
             ctx: RunContext[AgentDeps],
             kind: Literal["video", "article"] | None = None,
-            platform: Literal["youtube", "bilibili", "wechat_mp"] | None = None,
+            platform: Literal[
+                "youtube", "bilibili", "wechat_mp", "ntu_kaltura"
+            ] | None = None,
             state: Literal[
                 "pending", "fetching", "needs_extension", "needs_asr", "chunking",
                 "embedding", "ready", "failed", "no_text",

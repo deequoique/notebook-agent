@@ -9,6 +9,7 @@ import { challengePollInterval, LoginPage } from "./LoginPage";
 
 const capabilities: Capabilities = {
   supported_platforms: ["youtube"],
+  browser_companion: true,
   web_login_channels: ["telegram", "wechat"],
   save_enabled: true,
   max_save_batch_size: 10,

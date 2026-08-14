@@ -97,6 +97,7 @@ CREATE TABLE content_item (
   watch_pos_sec INTEGER,
   content_hash TEXT,
   raw_object_key TEXT,
+  raw_format TEXT NOT NULL DEFAULT 'json3',
   text_source TEXT NOT NULL,
   state TEXT NOT NULL,
   fail_reason TEXT,

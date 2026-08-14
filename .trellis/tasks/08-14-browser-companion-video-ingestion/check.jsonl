@@ -1,0 +1,11 @@
+{"file":".trellis/spec/backend/web-browser-runtime.md","reason":"Verify no regression in Web cookie/CSRF behavior, safe DTOs, or credential isolation."}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Verify one Alembic head, migration/model parity, isolated migration admission, and safe rollback."}
+{"file":".trellis/spec/backend/knowledge-item-management.md","reason":"Verify tenant predicates, dedup/restore/retry behavior, deletion races, and object cleanup."}
+{"file":".trellis/spec/backend/ingest-completion-queue.md","reason":"Verify captured ready/needs_asr outcomes and completion events remain durable, atomic, and privacy-safe."}
+{"file":".trellis/spec/backend/youtube-connector.md","reason":"Verify server-side YouTube remains compatible and browser capture does not weaken existing content/failure guards."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Verify production OpenAPI composition and generated TypeScript remain canonical and current."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Run required Web gates and inspect privacy, async-state, mobile, and accessibility behavior."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Audit every extension/API/service/storage/worker/retrieval/UI boundary and round-trip format."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Check that platform and capture contracts have single owners rather than scattered parsing/conditionals."}
+{"file":".trellis/tasks/08-14-browser-companion-video-ingestion/research/repository-integration.md","reason":"Check implementation against discovered auth, quota, ingestion, build, and test seams."}
+{"file":".trellis/tasks/08-14-browser-companion-video-ingestion/research/platform-feasibility.md","reason":"Check platform adapters preserve authorized browser-context capture and discard third-party session material."}

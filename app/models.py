@@ -40,7 +40,7 @@ class Base(DeclarativeBase):
 # --- Enum types (native Postgres ENUM, matches design.md DDL names) ---
 
 platform_enum = PgEnum(
-    "youtube", "bilibili", "wechat_mp",
+    "youtube", "bilibili", "wechat_mp", "ntu_kaltura",
     name="platform",
 )
 
@@ -292,6 +292,88 @@ class WebSession(Base):
     )
 
 
+class BrowserCompanionPairing(Base):
+    """Short-lived, single-use approval for one extension-held verifier."""
+
+    __tablename__ = "browser_companion_pairing"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    public_id: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    challenge_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    app_user_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("app_user.id", ondelete="CASCADE")
+    )
+    client_label: Mapped[str] = mapped_column(Text, nullable=False)
+    client_version: Mapped[str] = mapped_column(Text, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "length(client_label) BETWEEN 1 AND 200",
+            name="ck_browser_companion_pairing_label",
+        ),
+        CheckConstraint(
+            "length(client_version) BETWEEN 1 AND 64",
+            name="ck_browser_companion_pairing_version",
+        ),
+        Index("ix_browser_companion_pairing_expires", "expires_at"),
+        Index("ix_browser_companion_pairing_user", "app_user_id"),
+    )
+
+
+class BrowserCompanionGrant(Base):
+    """Hash-only, tenant-bound capability used solely for browser captures."""
+
+    __tablename__ = "browser_companion_grant"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    device_id: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    app_user_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("app_user.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    token_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    scope: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="capture:write"
+    )
+    client_label: Mapped[str] = mapped_column(Text, nullable=False)
+    client_version: Mapped[str] = mapped_column(Text, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    disabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "scope = 'capture:write'", name="ck_browser_companion_grant_scope"
+        ),
+        CheckConstraint(
+            "length(client_label) BETWEEN 1 AND 200",
+            name="ck_browser_companion_grant_label",
+        ),
+        CheckConstraint(
+            "length(client_version) BETWEEN 1 AND 64",
+            name="ck_browser_companion_grant_version",
+        ),
+        Index("ix_browser_companion_grant_user", "app_user_id"),
+        Index(
+            "ix_browser_companion_grant_active",
+            "token_hash",
+            "revoked_at",
+            "disabled_at",
+        ),
+    )
+
+
 class ConversationThread(Base):
     """One recoverable logical conversation inside a trusted channel chat."""
 
@@ -439,6 +521,9 @@ class ContentItem(Base):
     # 去重与溯源
     content_hash: Mapped[str | None] = mapped_column(Text)  # 正文/转录规范化后 sha256
     raw_object_key: Mapped[str | None] = mapped_column(Text)  # MinIO: 原始 json3 / HTML
+    raw_format: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="json3"
+    )
     text_source: Mapped[str] = mapped_column(
         text_source_enum, nullable=False, server_default="none"
     )
@@ -554,6 +639,76 @@ class IngestDispatch(Base):
             "item_id",
         ),
         Index("ix_ingest_dispatch_source_thread", "source_thread_id"),
+    )
+
+
+class BrowserCapture(Base):
+    """Durable hand-off from one authenticated extension capture to ingestion."""
+
+    __tablename__ = "browser_capture"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    public_id: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    app_user_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("app_user.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    item_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("content_item.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    dispatch_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("ingest_dispatch.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    request_key: Mapped[str] = mapped_column(Text, nullable=False)
+    body_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    protocol_version: Mapped[str] = mapped_column(Text, nullable=False)
+    client_version: Mapped[str] = mapped_column(Text, nullable=False)
+    caption_status: Mapped[str] = mapped_column(Text, nullable=False)
+    caption_source: Mapped[str | None] = mapped_column(Text)
+    language: Mapped[str | None] = mapped_column(Text)
+    capture_metadata: Mapped[dict | list] = mapped_column(
+        "metadata", JSONB, nullable=False
+    )
+    raw_object_key: Mapped[str | None] = mapped_column(Text)
+    content_hash: Mapped[str | None] = mapped_column(Text)
+    state: Mapped[str] = mapped_column(Text, nullable=False, server_default="staging")
+    error_code: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "app_user_id",
+            "request_key",
+            name="uq_browser_capture_user_request",
+        ),
+        CheckConstraint(
+            "caption_status IN ('available', 'unavailable')",
+            name="ck_browser_capture_caption_status",
+        ),
+        CheckConstraint(
+            "state IN ('staging', 'ready', 'failed')",
+            name="ck_browser_capture_state",
+        ),
+        CheckConstraint(
+            "(caption_status = 'available' AND caption_source IN "
+            "('official_cc', 'auto_caption') AND language IS NOT NULL) OR "
+            "(caption_status = 'unavailable' AND caption_source IS NULL "
+            "AND language IS NULL)",
+            name="ck_browser_capture_caption_contract",
+        ),
+        Index("ix_browser_capture_item_created", "item_id", created_at.desc()),
+        Index("ix_browser_capture_state", "state", "created_at"),
     )
 
 

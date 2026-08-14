@@ -53,6 +53,9 @@ export function AppShell({ children, loginChannel, onLogout, logoutPending = fal
               <RouteLink className="account-popover__link" to="/account/link">
                 绑定 Telegram
               </RouteLink>
+              <RouteLink className="account-popover__link" to="/account/browser-companion">
+                浏览器伴侣
+              </RouteLink>
               <button disabled={logoutPending} onClick={onLogout}>退出登录</button>
               {logoutError ? <p className="account-popover__error" role="alert">{logoutError}</p> : null}
             </div>

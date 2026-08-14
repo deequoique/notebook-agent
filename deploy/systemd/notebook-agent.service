@@ -16,6 +16,7 @@ Environment=NOTEBOOK_AGENT_LOG_RETRIEVAL_CONTENT=false
 Environment=NOTEBOOK_AGENT_LOG_DIR=/var/log/notebook-agent
 Environment=WEB_AUTH_ENABLED=true
 Environment=WEB_PUBLIC_ORIGIN=https://notebookai.deequoique.tech
+Environment=BROWSER_COMPANION_ALLOWED_ORIGINS=chrome-extension://omogodipchfidpikpeebgmlplpkjnpfm
 Environment=WEB_SERVE_STATIC=true
 Environment=WEB_STATIC_DIR=web/dist
 Environment=WEB_COOKIE_SECURE=true

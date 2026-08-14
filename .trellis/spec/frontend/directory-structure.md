@@ -29,6 +29,9 @@ web/
     │   └── AppShell.tsx
     ├── auth/
     │   └── LoginPage.tsx
+    ├── account/
+    │   ├── AccountLinkPage.tsx
+    │   └── BrowserCompanionPage.tsx
     ├── library/
     │   ├── AddVideosDialog.tsx
     │   ├── LibraryPage.tsx

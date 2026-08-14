@@ -202,6 +202,14 @@ h2 { line-height: 1.1; }
 .account-link-form .inline-error { margin-top: 0.8rem; }
 .account-link-status { margin: 0; color: var(--green); font-size: 0.78rem; font-weight: 700; line-height: 1.55; }
 .account-link-warning { max-width: 54rem; margin: 1.5rem 0 0; padding-top: 1rem; border-top: 1px solid rgba(91, 80, 63, 0.12); color: var(--muted); font-size: 0.76rem; line-height: 1.6; }
+.companion-page { display: grid; gap: 1.1rem; }
+.companion-page .account-link-page__heading,
+.companion-page .account-link-warning { grid-column: 1 / -1; }
+.companion-pairing,
+.companion-devices { max-width: 54rem; }
+.companion-device { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem 0; border-top: 1px solid var(--line); }
+.companion-device:first-of-type { margin-top: 1rem; }
+.companion-device p { margin: 0.25rem 0 0; color: var(--muted); font-size: 0.82rem; }
 
 .page-container,
 .login-page,

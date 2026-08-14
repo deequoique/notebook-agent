@@ -33,6 +33,11 @@
 - The combined ASGI dispatcher selects MCP by `MCP_PATH` before dispatching to
   the browser application. Browser cookies never authenticate MCP, and MCP
   Bearer credentials never authenticate browser routes.
+- Browser-companion capture is a third, isolated transport credential. Exact
+  extension-origin routes use a hash-at-rest `capture:write` Bearer; Web
+  cookies approve/list/revoke devices but never authenticate capture, and the
+  capture Bearer never authenticates normal Web or MCP routes. See
+  `browser-companion-capture.md`.
 - Production composition must forward the configured channel service into the
   canonical browser app; retained conversation routes must not become a
   permanent 503 surface through omitted wiring.
