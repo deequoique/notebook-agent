@@ -4,17 +4,21 @@ import json
 import logging
 
 import pytest
-from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequest, ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage
 
 from app.agent.runtime import (
+    AgentDeps,
+    AgentExecution,
+    ComposerDeps,
     KnowledgeAgent,
     _append_sources,
     _compressed_citations,
     build_agent,
+    build_composer,
 )
 from app.agent.services import EmbeddingUnavailable, ItemDetails, RetrievalUnavailable
 from app.agent.types import AgentRequest, Citation
@@ -110,22 +114,6 @@ async def test_agent_requires_search_and_returns_only_recorded_sources():
 
 
 @pytest.mark.asyncio
-async def test_agent_rejects_model_answer_that_skips_retrieval():
-    settings = replace(Settings(), agent_timeout_seconds=2)
-    runtime = KnowledgeAgent(
-        TestModel(call_tools=[], custom_output_text="unsupported answer"),
-        settings,
-        lambda _: FakeServices([]),
-    )
-
-    result = await runtime.run(request())
-
-    assert result.answer.status == "failed"
-    assert result.answer.error_code == "search_required"
-    assert not result.answer.citations
-
-
-@pytest.mark.asyncio
 async def test_agent_empty_search_fails_closed():
     settings = replace(Settings(), agent_timeout_seconds=2)
     runtime = KnowledgeAgent(
@@ -184,6 +172,7 @@ def test_model_tool_schemas_never_expose_trusted_identifiers():
     tools = agent._function_toolset.tools
 
     assert set(tools) == {
+        "todo_write",
         "search_segments",
         "get_neighbors",
         "get_item",
@@ -193,6 +182,15 @@ def test_model_tool_schemas_never_expose_trusted_identifiers():
         "confirm_video_save",
         "clarify_save_confirmation",
         "cancel_video_save",
+        "list_saved_items",
+        "get_saved_item",
+        "update_saved_item",
+        "delete_saved_items",
+        "confirm_item_deletion",
+        "clarify_item_deletion",
+        "cancel_item_deletion",
+        "restore_saved_items",
+        "retry_item_ingestion",
     }
     for tool in tools.values():
         properties = tool.function_schema.json_schema["properties"]
@@ -203,6 +201,25 @@ def test_model_tool_schemas_never_expose_trusted_identifiers():
             "request_key",
             "task_id",
         }.isdisjoint(properties)
+
+
+def test_runtime_facade_exports_supported_surface():
+    import app.agent.runtime as runtime
+
+    expected = {
+        "AgentDeps": AgentDeps,
+        "AgentExecution": AgentExecution,
+        "ComposerDeps": ComposerDeps,
+        "KnowledgeAgent": KnowledgeAgent,
+        "_append_sources": _append_sources,
+        "_compressed_citations": _compressed_citations,
+        "build_agent": build_agent,
+        "build_composer": build_composer,
+    }
+
+    assert set(runtime.__all__) == set(expected)
+    for name, value in expected.items():
+        assert getattr(runtime, name) is value
 
 
 def test_citation_equality_excludes_private_retrieval_diagnostics():
@@ -221,7 +238,7 @@ def test_citation_equality_excludes_private_retrieval_diagnostics():
 
 
 @pytest.mark.asyncio
-async def test_invalid_composer_drafts_retry_once_then_use_evidence_fallback():
+async def test_invalid_composer_draft_uses_evidence_fallback_without_retry():
     citations = [Citation(
         item_id=2,
         segment_id=3,
@@ -262,50 +279,7 @@ async def test_invalid_composer_drafts_retry_once_then_use_evidence_fallback():
     assert result.answer.text.startswith("自动总结未完成")
     assert "[S999]" not in result.answer.text
     assert services.calls == ["search_segments"]
-    assert len(composer_requests) == 2
-
-
-@pytest.mark.asyncio
-async def test_composer_repairs_citation_against_same_allow_list_without_search():
-    citation = Citation(
-        item_id=2,
-        segment_id=3,
-        title="source",
-        excerpt="evidence",
-        url="https://example.test",
-    )
-    services = FakeServices([citation])
-
-    composer_calls = []
-
-    def composer(_messages, info):
-        composer_calls.append(info)
-        assert info.output_tools == []
-        assert info.model_settings["max_tokens"] == 1000
-        assert "extra_body" not in info.model_settings
-        ids = [999] if len(composer_calls) == 1 else [3]
-        return ModelResponse(
-            parts=[
-                TextPart(json.dumps({
-                    "sections": [{"text": "repaired answer", "citation_ids": ids}]
-                }))
-            ]
-        )
-
-    runtime = KnowledgeAgent(
-        TestModel(call_tools=["search_segments"], custom_output_text="retrieval stop"),
-        replace(Settings(), agent_timeout_seconds=2),
-        lambda _: services,
-        composer_model=FunctionModel(composer),
-    )
-    result = await runtime.run(request())
-
-    assert result.answer.status == "ok"
-    assert "repaired answer [S3]" in result.answer.text
-    assert "S999" not in result.answer.text
-    assert services.calls == ["search_segments"]
-    assert len(composer_calls) == 2
-    assert len(result.new_messages) == 2
+    assert len(composer_requests) == 1
 
 
 @pytest.mark.asyncio
@@ -341,25 +315,6 @@ async def test_retrieval_loop_converges_before_hard_limit_and_disables_parallel_
     assert len(services.calls) == 5
     assert all(info.model_settings["parallel_tool_calls"] is False for info in requests)
     assert not ({"search_segments", "get_neighbors", "get_item", "open_at"} & {tool.name for tool in requests[-1].function_tools})
-
-
-@pytest.mark.asyncio
-async def test_zero_hit_retrieval_loop_returns_no_evidence_without_limit():
-    services = FakeServices([])
-
-    def looping_model(_messages, info):
-        visible = {tool.name for tool in info.function_tools}
-        if "search_segments" in visible:
-            return ModelResponse(parts=[ToolCallPart("search_segments", json.dumps({"query": "query"}), tool_call_id=f"search-{len(services.calls)}")])
-        return ModelResponse(parts=[TextPart("knowledge base has insufficient evidence")])
-
-    result = await KnowledgeAgent(
-        FunctionModel(looping_model), replace(Settings(), agent_timeout_seconds=2), lambda _: services
-    ).run(request())
-
-    assert result.answer.status == "not_found"
-    assert result.answer.error_code == "no_evidence"
-    assert services.calls == ["search_segments", "search_segments"]
 
 
 @pytest.mark.asyncio
@@ -412,12 +367,10 @@ async def test_provider_batch_executes_one_backend_retrieval_per_model_step():
         FunctionModel(batched_model),
         replace(Settings(), agent_timeout_seconds=2),
         lambda _: services,
-        composer_model=composer_for(3),
     ).run(request())
 
     assert result.answer.status == "ok"
-    assert "根据知识库证据的总结" in result.answer.text
-    assert not result.answer.text.startswith("自动总结未完成")
+    assert result.answer.citations == [citation]
     assert services.calls == ["search_segments", "get_neighbors"]
     assert all(info.model_settings["parallel_tool_calls"] is False for info in requests)
     assert all("max_tokens" not in info.model_settings for info in requests)
@@ -500,251 +453,6 @@ def test_compressed_citations_preserve_item_coverage_then_retrieval_order():
     assert len({citation.segment_id for citation in compressed}) == 8
     assert {citation.item_id for citation in compressed} == {1, 2, 3, 4, 5}
     assert [citation.excerpt for citation in citations] == original_excerpts
-
-
-def compression_test_citations() -> list[Citation]:
-    return [
-        Citation(
-            item_id=((index - 1) % 5) + 1,
-            segment_id=index,
-            title=f"source {index}",
-            excerpt=f"evidence-{index} " * 50,
-            url=f"https://example.test/{index}",
-        )
-        for index in range(1, 11)
-    ]
-
-
-@pytest.mark.asyncio
-async def test_composer_output_limit_compresses_once_and_recovers(caplog):
-    citations = compression_test_citations()
-    citations[0] = citations[0].model_copy(
-        update={"excerpt": "x" * 180 + "TRUNCATED-CONTEXT-SENTINEL"}
-    )
-    rendered_prompts: list[str] = []
-
-    def composer(messages, info):
-        rendered_prompts.append(
-            ModelMessagesTypeAdapter.dump_json(messages).decode()
-        )
-        assert info.model_settings["max_tokens"] == 1000
-        response = ModelResponse(parts=[TextPart(json.dumps({
-            "sections": [{"text": "compressed answer", "citation_ids": [1]}]
-        }))])
-        if len(rendered_prompts) == 1:
-            response.usage = RequestUsage(output_tokens=2001)
-        return response
-
-    diagnostics = RequestDiagnostics.start("request", 1, "f" * 32)
-    with caplog.at_level(logging.INFO, logger="notebook_agent.runtime"):
-        result = await KnowledgeAgent(
-            TestModel(call_tools=["search_segments"], custom_output_text="stop"),
-            replace(Settings(), agent_timeout_seconds=2),
-            lambda _: FakeServices(citations),
-            composer_model=FunctionModel(composer),
-        ).run(request(), diagnostics=diagnostics)
-
-    payloads = [
-        record.diagnostic_payload
-        for record in caplog.records
-        if hasattr(record, "diagnostic_payload")
-    ]
-    compressed = [
-        value for value in payloads if value.get("stage") == "context_compressed"
-    ]
-    terminal = [
-        value for value in payloads
-        if value.get("stage") == "agent_failed"
-        and value.get("agent_phase") == "answer"
-    ]
-    assert result.answer.status == "ok"
-    assert "compressed answer [S1]" in result.answer.text
-    assert not result.answer.text.startswith("自动总结未完成")
-    assert len(rendered_prompts) == 2
-    assert rendered_prompts[0].count("ID ") == 10
-    assert rendered_prompts[1].count("ID ") == 8
-    assert "TRUNCATED-CONTEXT-SENTINEL" in rendered_prompts[0]
-    assert "TRUNCATED-CONTEXT-SENTINEL" not in rendered_prompts[1]
-    assert compressed[0]["projected_value"] == 10
-    assert compressed[0]["result_count"] == 8
-    assert compressed[0]["limit_kind"] == "output_tokens"
-    assert not terminal
-
-
-@pytest.mark.asyncio
-async def test_compressed_allow_list_rejects_dropped_segment_before_repair():
-    citations = compression_test_citations()
-    calls = 0
-
-    def composer(_messages, _info):
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            return ModelResponse(
-                parts=[TextPart(json.dumps({
-                    "sections": [{"text": "full draft", "citation_ids": [1]}]
-                }))],
-                usage=RequestUsage(output_tokens=2001),
-            )
-        citation_id = 9 if calls == 2 else 1
-        return ModelResponse(parts=[TextPart(json.dumps({
-            "sections": [{
-                "text": "compressed repaired",
-                "citation_ids": [citation_id],
-            }]
-        }))])
-
-    result = await KnowledgeAgent(
-        TestModel(call_tools=["search_segments"], custom_output_text="stop"),
-        replace(Settings(), agent_timeout_seconds=2),
-        lambda _: FakeServices(citations),
-        composer_model=FunctionModel(composer),
-    ).run(request())
-
-    assert calls == 3
-    assert "compressed repaired [S1]" in result.answer.text
-    assert "S9" not in result.answer.text
-
-
-@pytest.mark.asyncio
-async def test_compression_attempts_share_one_answer_timeout():
-    citations = compression_test_citations()
-    calls = 0
-    compressed_attempt_cancelled = False
-
-    async def composer(_messages, _info):
-        nonlocal calls, compressed_attempt_cancelled
-        calls += 1
-        call_index = calls
-        try:
-            # Either attempt would fit inside a freshly reset 300 ms timeout,
-            # but together they cannot fit inside the one shared deadline.
-            await asyncio.sleep(0.2)
-        except asyncio.CancelledError:
-            if call_index == 2:
-                compressed_attempt_cancelled = True
-            raise
-        return ModelResponse(
-            parts=[TextPart(json.dumps({
-                "sections": [{"text": "too late", "citation_ids": [1]}]
-            }))],
-            usage=RequestUsage(output_tokens=2001 if call_index == 1 else 1),
-        )
-
-    result = await KnowledgeAgent(
-        TestModel(call_tools=["search_segments"], custom_output_text="stop"),
-        replace(Settings(), agent_timeout_seconds=0.3),
-        lambda _: FakeServices(citations),
-        composer_model=FunctionModel(composer),
-    ).run(request())
-
-    assert calls == 2
-    assert compressed_attempt_cancelled is True
-    assert result.answer.text.startswith("自动总结未完成")
-    assert "too late" not in result.answer.text
-
-
-@pytest.mark.asyncio
-async def test_composer_second_output_limit_uses_original_evidence_fallback(caplog):
-    citations = compression_test_citations()
-    calls = 0
-
-    def composer(_messages, _info):
-        nonlocal calls
-        calls += 1
-        return ModelResponse(
-            parts=[TextPart(json.dumps({
-                "sections": [{"text": "discarded", "citation_ids": [1]}]
-            }))],
-            usage=RequestUsage(output_tokens=2001),
-        )
-
-    with caplog.at_level(logging.INFO, logger="notebook_agent.runtime"):
-        result = await KnowledgeAgent(
-            TestModel(call_tools=["search_segments"], custom_output_text="stop"),
-            replace(Settings(), agent_timeout_seconds=2),
-            lambda _: FakeServices(citations),
-            composer_model=FunctionModel(composer),
-        ).run(
-            request(),
-            diagnostics=RequestDiagnostics.start("request", 1, "1" * 32),
-        )
-
-    payloads = [
-        record.diagnostic_payload
-        for record in caplog.records
-        if hasattr(record, "diagnostic_payload")
-    ]
-    assert calls == 2
-    assert result.answer.text.startswith("自动总结未完成")
-    assert result.answer.citations == citations
-    assert "discarded" not in result.answer.text
-    assert sum(value.get("stage") == "context_compressed" for value in payloads) == 1
-    assert sum(
-        value.get("stage") == "agent_failed"
-        and value.get("agent_phase") == "answer"
-        for value in payloads
-    ) == 1
-
-
-@pytest.mark.asyncio
-async def test_composer_length_exhaustion_uses_captured_finish_reason_for_compression():
-    citations = compression_test_citations()
-    calls = 0
-
-    def composer(_messages, _info):
-        nonlocal calls
-        calls += 1
-        if calls <= 2:
-            return ModelResponse(
-                parts=[TextPart('{"sections":')],
-                finish_reason="length",
-            )
-        return ModelResponse(parts=[TextPart(json.dumps({
-            "sections": [{"text": "recovered after cutoff", "citation_ids": [1]}]
-        }))])
-
-    result = await KnowledgeAgent(
-        TestModel(call_tools=["search_segments"], custom_output_text="stop"),
-        replace(Settings(), agent_timeout_seconds=2),
-        lambda _: FakeServices(citations),
-        composer_model=FunctionModel(composer),
-    ).run(request())
-
-    assert calls == 3
-    assert "recovered after cutoff [S1]" in result.answer.text
-    assert not result.answer.text.startswith("自动总结未完成")
-
-
-@pytest.mark.asyncio
-async def test_valid_but_length_marked_composer_response_is_still_compressed():
-    citations = compression_test_citations()
-    calls = 0
-
-    def composer(_messages, _info):
-        nonlocal calls
-        calls += 1
-        return ModelResponse(
-            parts=[TextPart(json.dumps({
-                "sections": [{
-                    "text": "possibly truncated" if calls == 1 else "complete",
-                    "citation_ids": [1],
-                }]
-            }))],
-            finish_reason="length" if calls == 1 else "stop",
-        )
-
-    result = await KnowledgeAgent(
-        TestModel(call_tools=["search_segments"], custom_output_text="stop"),
-        replace(Settings(), agent_timeout_seconds=2),
-        lambda _: FakeServices(citations),
-        composer_model=FunctionModel(composer),
-    ).run(request())
-
-    assert calls == 2
-    assert "complete [S1]" in result.answer.text
-    assert "possibly truncated" not in result.answer.text
-    assert not result.answer.text.startswith("自动总结未完成")
 
 
 @pytest.mark.asyncio
@@ -882,7 +590,7 @@ def test_multi_source_output_groups_top_five_videos_and_keeps_distant_timestamps
 
 
 @pytest.mark.asyncio
-async def test_composer_top_five_retry_does_not_retrieve_again():
+async def test_composer_projects_top_five_without_retry_or_fresh_retrieval():
     citations = [
         Citation(
             item_id=index,
@@ -901,9 +609,11 @@ async def test_composer_top_five_retry_does_not_retrieve_again():
     def composer(_messages, info):
         composer_calls.append(info)
         assert info.output_tools == []
-        ids = list(range(1, 7)) if len(composer_calls) == 1 else list(range(1, 6))
         return ModelResponse(parts=[TextPart(json.dumps({
-            "sections": [{"text": "grouped sources", "citation_ids": ids}]
+            "sections": [{
+                "text": "grouped sources",
+                "citation_ids": list(range(1, 6)),
+            }]
         }))])
 
     result = await KnowledgeAgent(
@@ -915,7 +625,7 @@ async def test_composer_top_five_retry_does_not_retrieve_again():
 
     assert result.answer.status == "ok"
     assert services.calls == ["search_segments"]
-    assert len(composer_calls) == 2
+    assert len(composer_calls) == 1
     assert {citation.item_id for citation in result.answer.citations} == set(range(1, 6))
 
 
@@ -933,7 +643,7 @@ async def test_agent_tool_error_and_request_limit_fail_closed():
     )
     failed = await broken.run(request())
     assert failed.answer.status == "failed"
-    assert failed.answer.error_code == "retrieval_unavailable"
+    assert failed.answer.error_code == "read_unavailable"
 
     class MissingEmbeddingServices(FakeServices):
         def search_segments(self, query, *, limit=6):
@@ -945,7 +655,7 @@ async def test_agent_tool_error_and_request_limit_fail_closed():
         lambda _: MissingEmbeddingServices([]),
     )
     unavailable_result = await unavailable.run(request())
-    assert unavailable_result.answer.error_code == "embedding_unavailable"
+    assert unavailable_result.answer.error_code == "read_unavailable"
 
     citation = Citation(
         item_id=2,

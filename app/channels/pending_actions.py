@@ -356,19 +356,12 @@ class PendingConfirmationService:
                     .order_by(PendingChannelAction.id.desc())
                     .limit(1)
                 )
-                now = self._as_utc(db.scalar(select(func.now())))
-                payload = (
-                    action.payload
-                    if action is not None and isinstance(action.payload, dict)
-                    else {}
-                )
-                expired = action is not None and self._as_utc(action.expires_at) <= now
-                # An applying claim owns the external side effect even after
-                # the ordinary confirmation TTL. Keep it visible so a stale
-                # lease can be recovered by trusted confirmation; never make
-                # the model reconstruct targets from prose.
-                if expired and payload.get("effect_state") != "applying":
-                    action = None
+                # Keep the latest unresolved row visible even after its
+                # confirmation TTL. The decision tool accepts no target IDs,
+                # and the mutation service remains the authority that returns
+                # ``confirmation_expired`` and cancels the row. Hiding it here
+                # would turn a valid expired-code reply into an unknown-tool
+                # runtime error before the trusted service can classify it.
                 ids = self._payload_item_ids(action) if action is not None else None
                 return PendingDeleteSnapshot(
                     active=bool(ids),

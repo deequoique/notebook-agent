@@ -8,22 +8,10 @@ knowledge-answer persistence path. It applies only to tenant-scoped knowledge
 answers. Video save and confirmation actions retain their existing terminal
 `ActionOutcome` behavior and do not consume retrieval budget.
 
-With `AGENT_BOUNDED_AUTONOMY_ENABLED=false` (the default), the runtime keeps
-the legacy two-stage path:
-
-```text
-trusted request -> retrieval/action planner -> trusted Citation cache
-                -> tool-free answer composer -> validated answer
-                -> deterministic evidence fallback on composer failure
-```
-
-The planner's text is only a stop signal. It is never a user-visible answer,
-is never citation-validated, and is never persisted.
-
-With `AGENT_BOUNDED_AUTONOMY_ENABLED=true`, one primary Turn Agent chooses
-whether the current message needs private-knowledge tools and returns natural
-text. The application chooses the finalization path from trusted tool/action
-traces rather than a model-authored answer mode:
+Bounded autonomy is the only runtime. One primary Turn Agent chooses whether
+the current message needs private-knowledge tools and returns natural text.
+The application chooses the finalization path from trusted tool/action traces
+rather than a model-authored answer mode:
 
 ```text
 trusted request + bounded context -> Turn Agent <-> visible atomic tools
@@ -32,10 +20,11 @@ trusted request + bounded context -> Turn Agent <-> visible atomic tools
                                   -> validated natural answer + server sources
 ```
 
-The rollout flag changes orchestration only. Tenant identity, exact current-
-message reference scope, deleted/non-ready gates, pending confirmation,
-idempotency, side-effect claims, hard tool/request/output/time limits, and the
-current-run Citation allow-list remain server-owned.
+There is no environment or Settings switch to a planner-to-Composer runtime.
+Tenant identity, exact current-message reference scope, deleted/non-ready
+gates, pending confirmation, idempotency, side-effect claims, hard
+tool/request/output/time limits, and the current-run Citation allow-list remain
+server-owned.
 
 ### 1.1 Bounded-autonomy contracts
 
@@ -54,7 +43,7 @@ current-run Citation allow-list remain server-owned.
   trusted evidence. The repair currently receives its own `RunUsage`; do not
   claim that primary-run provider/request usage is mechanically subtracted
   until a separately tested shared-accounting change lands.
-- Inventory/detail reads are non-terminal observations on the rollout path, so
+- Inventory/detail reads are non-terminal observations, so
   a turn may list items and then search within an item returned by the current
   run or bounded trusted prior inventory context. Domain services repeat
   tenant, active/deleted, ready-state, item, and exact-reference predicates.
@@ -63,10 +52,10 @@ current-run Citation allow-list remain server-owned.
 - Save, management mutation, confirmation, cancellation, restore, and explicit
   ingestion retry remain terminal canonical outcomes. They are never retried
   by Agent recovery, and model prose cannot replace their result.
-- Tool prepare policy hides disabled save/management groups, hides pending
-  decision tools without a matching cached trusted pending snapshot, and hides
-  unrelated management/pending tools under exact URL scope. Bare URL save
-  confirmation remains a deterministic pre-model route.
+- Save and management tools are always registered. Tool prepare policy hides
+  pending decision tools without a matching cached trusted pending snapshot
+  and hides unrelated management/pending tools under exact URL scope. Bare URL
+  save confirmation remains a deterministic pre-model route.
 - `todo_write` is optional working memory for one dependent multi-step turn.
   It stores at most six short items with only `pending`, `in_progress`,
   `completed`, or `blocked` states and at most one `in_progress` item. It is
@@ -94,10 +83,8 @@ NORMAL_EXPANSION_CALLS_LIMIT = 3
 MAX_SOURCE_ITEMS = 5
 SEARCH_RESULT_LIMIT = 10
 SEARCH_CANDIDATE_POOL_LIMIT = 50
-ANSWER_REQUEST_LIMIT = 2
 COMPRESSED_EVIDENCE_LIMIT = 8
 COMPOSER_EVIDENCE_EXCERPT_CHARS = 360
-COMPRESSED_EVIDENCE_EXCERPT_CHARS = 180
 
 class AgentDeps:
     citations: dict[int, Citation]       # keyed by segment_id, insertion order
@@ -124,18 +111,15 @@ class ComposerDeps:
 ```
 
 `AGENT_REQUEST_LIMIT`, `AGENT_TOOL_CALLS_LIMIT`, and
-`AGENT_OUTPUT_TOKEN_LIMIT` remain deployment safety limits. Retrieval and
-composer each receive a new `RunUsage`; the configured output-token limit is
-therefore per stage, not a cumulative allowance shared by planning and answer
-generation.
+`AGENT_OUTPUT_TOKEN_LIMIT` remain deployment safety limits. The primary Turn
+Agent and optional Composer repair each receive a new `RunUsage`; the
+configured output-token limit is therefore per stage, not a cumulative
+allowance.
 
 `AGENT_COMPOSER_MAX_TOKENS` defaults to 1000 and is the real provider-side cap
-for each Composer request. It must be positive, and multiplied by
-`ANSWER_REQUEST_LIMIT` it must not exceed `AGENT_OUTPUT_TOKEN_LIMIT`. A full
-attempt and its optional compressed attempt each receive fresh `RunUsage`, but
-both remain inside one answer-stage wall-clock timeout. Because each attempt
-may perform one structured-output repair, the optional two-attempt workflow can
-make at most four provider requests (4000 capped output tokens at the default).
+for the optional Composer repair. It must be positive and must not exceed
+`AGENT_OUTPUT_TOKEN_LIMIT`. The repair uses `request_limit=1`,
+`output_retries=0`, and one answer-stage wall-clock timeout.
 
 ## 3. Contracts
 
@@ -157,23 +141,23 @@ make at most four provider requests (4000 capped output tokens at the default).
   representative for each, then fills remaining slots by score with distinct
   segments from those selected items. All database hydration remains tenant
   scoped.
-- The planner must call `search_segments` before a knowledge answer may exist.
-  Zero trusted citations after search returns `not_found/no_evidence` and does
-  not invoke composer. Embedding and retrieval failures remain
-  `embedding_unavailable` and `retrieval_unavailable` rather than evidence
-  fallback.
-- Planner usage-limit or timeout failures with trusted citations continue to
-  answer composition. Without citations they use phase-accurate failed-limit
-  or timeout behavior. The raw hard limits remain defense in depth; increasing
-  them is not a convergence fix.
-- The composer has no retrieval or action tools. It receives only the user
+- A social/capability answer may finish without retrieval. Once a knowledge
+  search succeeds, natural-answer validation requires current-run citations.
+  Empty search remains distinct from a transient read failure; exhausted read
+  recovery returns `read_unavailable`, while trusted partial evidence may use
+  deterministic fallback.
+- Primary-agent usage-limit or timeout failures with trusted citations return
+  deterministic evidence fallback. Without citations they use phase-accurate
+  failed-limit or timeout behavior. The raw hard limits remain defense in
+  depth; increasing them is not a convergence fix.
+- The Composer has no retrieval or action tools. It receives only the user
   question and bounded Citation title, excerpt, timestamp, and segment-ID
   allow-list. It uses `PromptedOutput(AnswerDraft)` to parse schema-prompted
   JSON text without an output tool or `tool_choice=required`. `AnswerDraft`
   validation requires every cited ID to be allowed, every section to cite
-  evidence, and at most five distinct cited item IDs. PydanticAI performs at
-  most one output retry, against the same allow-list; it never starts a fresh
-  search.
+  evidence, and at most five distinct cited item IDs. Composer is invoked only
+  for one same-evidence repair after natural-answer validation fails. It has no
+  output retry and never starts a fresh search.
 - Every Composer request sends `AGENT_COMPOSER_MAX_TOKENS` as the provider's
   actual `max_tokens` generation cap. For DeepSeek Chat Completions, the model
   profile must retain DeepSeek response/tool semantics, map the field to
@@ -181,32 +165,24 @@ make at most four provider requests (4000 capped output tokens at the default).
   `thinking: {"type": "disabled"}` without `reasoning_effort=none`.
   Other compatible Composer models request provider-neutral `thinking=False`
   when supported. Retrieval model settings remain unchanged.
-- If a full Composer attempt exceeds its output-token usage limit, or captured
-  response messages prove provider truncation with `finish_reason=length`, the
-  server may retry exactly once with a local deterministic evidence view. The
-  view selects at most eight segments, gives each retained item one segment
-  before filling in retrieval order, and truncates prompt excerpts to 180
-  characters. The compressed prompt rows are also its entire citation
-  allow-list. Ordinary invalid citations, provider failures, and timeouts do
-  not trigger compression; already compact evidence skips a useless retry.
+- Before repair, the server projects at most five source items in retrieval
+  order. Invalid citations, output-token exhaustion, provider failures, and
+  timeouts do not trigger another Composer request; they return deterministic
+  evidence fallback.
 - The application appends `[S<segment_id>]` markers after validating the
   structured draft, and source rendering owns titles and real URLs. Sources
   are grouped once per item in retrieval order, retain distinct timestamp
   evidence under the item, and never infer chapter titles.
-- Composer retry exhaustion, timeout, provider failure, or a terminal
-  usage-limit failure after the optional compressed attempt discards every
-  draft and returns `status=ok` evidence fallback. The
+- Composer validation failure, timeout, provider failure, or usage-limit
+  failure discards the draft and returns `status=ok` evidence fallback. The
   fallback begins with `自动总结未完成，以下是知识库中最相关的证据：` and contains only
   real grouped sources, timestamp links, and bounded excerpts.
 - Knowledge success and fallback persist only normalized user question plus
   final visible answer, while the conversation turn keeps public Citation
-  sources. Tool payloads, planner text, composer retry prompts, and invalid
-  drafts are never persisted.
+  sources. Tool payloads, intermediate Turn Agent text, Composer repair prompts,
+  and invalid drafts are never persisted.
 - Diagnostics use only fixed safe fields. Retrieval events carry
   `agent_phase=retrieval`; composer events carry `agent_phase=answer`.
-  `context_compressed` records only before/after counts, retry count, and a
-  fixed limit classification; a recovered full attempt is not terminal
-  `agent_failed`.
   `tool_outcome=skipped` is allowed. `ModelHTTPError` additionally projects
   its validated integer `http_status`. Production forbids its body and message;
   explicit development records its complete message/model/body for diagnosis.
@@ -218,50 +194,46 @@ make at most four provider requests (4000 capped output tokens at the default).
 | Condition | Required behavior |
 | --- | --- |
 | provider emits several retrieval calls in one response | exactly one backend retrieval runs; remaining calls are typed skipped results |
-| normal search/expansion budgets are exhausted | no further backend retrieval; planner can stop and existing evidence composes |
-| successful searches have no evidence | `not_found/no_evidence`, no composer and no limit wording |
-| planner timeout or usage limit after evidence | log retrieval phase/kind and compose from existing Citations |
-| planner timeout or usage limit without evidence | fail closed with phase-accurate wording |
-| answer draft has unknown IDs or six item IDs | one answer-only retry using the original allow-list |
-| full answer output-token limit or captured `finish_reason=length` | one compressed attempt when the evidence view is smaller |
-| compressed answer succeeds | validate only compressed IDs, render normal `ok` answer, no terminal failure diagnostic |
-| answer retry, timeout, provider error, or compressed attempt fails | `ok` deterministic fallback from original evidence, no draft persistence |
+| normal search/expansion budgets are exhausted | no further backend retrieval; existing trusted evidence remains usable |
+| successful searches have no evidence | bounded empty-search recovery or `not_found/no_evidence`, no Composer repair |
+| primary timeout or usage limit after evidence | log retrieval phase/kind and return deterministic evidence fallback |
+| primary timeout or usage limit without evidence | fail closed with phase-accurate wording |
+| natural answer has unknown/missing IDs or six item IDs | one tool-free Composer request using the projected same-evidence allow-list |
+| Composer draft is invalid, truncated, over limit, timed out, or provider fails | `ok` deterministic fallback from trusted evidence; no second Composer request or draft persistence |
 | provider HTTP request fails | preserve phase behavior; production logs safe status/class, development also logs full error details |
 | valid answer draft | server-rendered markers and grouped real sources, at most five items |
 | action succeeds, including a mixed tool batch | canonical action result wins and composer does not run |
-| embedding/database failure | `failed/embedding_unavailable` or `failed/retrieval_unavailable`, never fallback |
+| read failure exhausts its bounded recovery | `failed/read_unavailable` without evidence, otherwise trusted partial/evidence fallback |
 
 ## 5. Good / Base / Bad Cases
 
 - Good: a provider ignores its parallel-tool-call hint and emits two searches;
-  the first executes, the second gets `same_model_step`, and a later
-  composer generates a validated structured answer using only the cached
-  source IDs.
+  the first executes, the second gets `same_model_step`, and the Turn Agent
+  returns a validated natural answer using only the cached source IDs.
 - Good: one video dominates raw segment scores but bounded over-fetch exposes
   five relevant item groups. The answer shows one top-level row per video and
   preserves two distant links for the selected first video.
-- Base: one search provides sufficient evidence. The planner stops, the
-  composer uses a fresh output-token budget, and canonical history contains
-  only the normalized question and final answer.
+- Base: one search provides sufficient evidence. The Turn Agent returns a
+  valid cited answer directly, and canonical history contains only the
+  normalized question and final answer.
 - Bad: rely on `parallel_tool_calls=False` alone, treat skipped tools as zero
-  results, rerun search to fix citation formatting, return a raw planner
-  draft, fabricate chapter names, or log private evidence/exception text.
+  results, rerun search to fix citation formatting, invoke Composer on every
+  successful answer, fabricate chapter names, or log private evidence or
+  exception text.
 
 ## 6. Tests Required
 
 - A batched `FunctionModel` returns two searches, then two neighbor calls and
   one metadata call with non-zero `RequestUsage.output_tokens` totaling 2066.
   Assert one backend retrieval per model step, typed skipped payloads, no
-  extra embedding/SQL work, and a successful composer run with a fresh budget.
+  extra embedding/SQL work, and a trusted final answer or evidence fallback.
 - Cover normal 5/2/3 convergence, zero-hit exit, hard request/tool limits,
   phase-correct output-token diagnostics, and retrieval embedding/database
   failures.
-- Cover valid composer answers, unknown-ID repair, over-five-item repair,
-  second invalid draft fallback, timeout fallback, provider-error fallback,
-  provider-cap request serialization, output-token compression recovery,
-  captured-length recovery, compressed allow-list enforcement, shared timeout,
-  no-op compression, and second-limit fallback. Assert no repair starts
-  retrieval and no invalid model content reaches history.
+- Cover direct valid natural answers, one same-evidence Composer repair,
+  invalid-draft fallback, timeout fallback, provider-error fallback,
+  provider-cap request serialization, and output-token fallback. Assert repair
+  runs at most once, starts no retrieval, and persists no invalid model content.
 - Cover hybrid duplicate collapse, one-item crowding, six-item selection,
   distant same-item segments, public limit clamping, bounded candidate pool,
   and PostgreSQL tenant predicates during hydration.
@@ -275,24 +247,24 @@ make at most four provider requests (4000 capped output tokens at the default).
 
 ```python
 # A provider can ignore this preference and execute an entire batch.
-result = await planner.run(..., model_settings={"parallel_tool_calls": False})
+result = await turn_agent.run(..., model_settings={"parallel_tool_calls": False})
 
 # Formatting failure wastes an embedding request and loses the original budget.
 if invalid_citation:
-    return await planner.run(question_again)
+    return await turn_agent.run(question_again)
 ```
 
 #### Correct
 
 ```python
-with planner.parallel_tool_call_execution_mode("sequential"):
-    await planner.run(...)
+with turn_agent.parallel_tool_call_execution_mode("sequential"):
+    await turn_agent.run(...)
 
 # The locked reservation decides whether a retrieval backend may run.
 if deps.reserve_retrieval(run_step=ctx.run_step, kind=kind) is not EXECUTE:
     return {"status": "skipped", "evidence": [], "reason": "same_model_step"}
 
-# A fresh, tool-free composer may retry only against trusted cached evidence.
+# One tool-free Composer repair can use only trusted cached evidence.
 answer = await composer.run(question, deps=ComposerDeps(allowed_citations))
 ```
 
@@ -362,7 +334,7 @@ it must never normalize into unrestricted retrieval.
 - Vector search, lexical search, result hydration, neighbor hydration, item
   metadata, and timestamp resolution repeat tenant, active/deleted, ready-state,
   and exact-reference predicates as applicable. Defense-in-depth citation
-  filtering runs before evidence reaches the planner or trusted Citation cache.
+  filtering runs before evidence reaches the Turn Agent's trusted Citation cache.
 - A scoped miss is a successful empty tool result, not a retrieval failure. It
   records exactly one `started` and one `succeeded` tool outcome and cannot
   invoke Composer without in-scope citations.

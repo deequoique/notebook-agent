@@ -15,7 +15,7 @@ SYSTEMD_UNIT = ROOT / "deploy" / "systemd" / "notebook-agent-web.service"
 MIGRATION_UNIT = (
     ROOT / "deploy" / "systemd" / "notebook-agent-web-migrate.service"
 )
-FRONTEND_GUIDE = ROOT / "docs" / "frontend-deployment.md"
+FRONTEND_GUIDE = ROOT / "docs" / "deployment" / "frontend.md"
 
 
 def _required_text(path: Path) -> str:

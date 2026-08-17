@@ -117,8 +117,6 @@ AGENT_API_KEY=replace-with-model-key
 
 NOTEBOOK_AGENT_ENV=development
 NOTEBOOK_AGENT_LOG_RETRIEVAL_CONTENT=false
-AGENT_SAVE_ENABLED=false
-AGENT_ITEM_MANAGEMENT_ENABLED=false
 ```
 
 启动数据库并升级 schema：
@@ -163,14 +161,12 @@ MINIO_ROOT_PASSWORD=replace-with-a-local-minio-password
 MINIO_ENDPOINT_URL=http://localhost:9000
 MINIO_BUCKET=kb-raw
 
-# First rollout stays fail-closed. Enable only after the checks below pass.
-AGENT_SAVE_ENABLED=false
-AGENT_ITEM_MANAGEMENT_ENABLED=false
 TRASH_RETENTION_DAYS=30
 TRASH_PURGE_INTERVAL_SECONDS=3600
 ```
 
-首次 rollout 时先保持两个 feature flag 为 `false`。依赖、migration 和 worker 检查通过后，再设为 `true` 并重启 Notebook Agent 进程。
+保存与条目管理能力没有环境开关。首次 rollout 必须先完成依赖、migration 和
+worker 检查，再启动会接收用户流量的 Notebook Agent 进程。
 
 启动依赖和 worker：
 
@@ -203,12 +199,7 @@ docker compose up -d
 .venv/bin/python -m app.cli mcp-grant issue --user-id <user-id> --scope full --label local-full
 ```
 
-把根 `.env` 的两个 flag 改为 `true`，再启动 full stdio MCP：
-
-```dotenv
-AGENT_SAVE_ENABLED=true
-AGENT_ITEM_MANAGEMENT_ENABLED=true
-```
+所有依赖通过 readiness 后，再启动 full stdio MCP：
 
 ```bash
 MCP_TOKEN='<raw-token>' \
@@ -353,8 +344,6 @@ WEB_STATIC_DIR=web/dist
 WEB_FORWARDED_ALLOW_IPS=127.0.0.1
 WEB_PUBLISH_BUDGET_SECONDS=5
 
-# 首次 rollout 保持 false；worker、queue 和对象存储 ready 后再开启。
-AGENT_SAVE_ENABLED=false
 ```
 
 `WEB_COOKIE_SECURE` 在本地和生产都保持 `true`，因为 session/CSRF 使用 `__Host-` cookie 契约。`WEB_FORWARDED_ALLOW_IPS` 只能列出明确受信任的反向代理地址，禁止 `*`。MCP HTTP 与 Web 是两个独立 server profile；两者同机运行时必须配置不同端口，例如保留 MCP `8000`、把 Web 改为 `8001`。
@@ -394,7 +383,9 @@ GET /videos/<public-id>  # 直接刷新仍返回 SPA
 GET /api/v1/does-not-exist  # 返回 JSON 404，而不是 SPA HTML
 ```
 
-登录后先验证只读资料库；确认 Redis、MinIO、worker/beat 与 ingestion queues ready，再设置 `AGENT_SAVE_ENABLED=true` 并重启 gateway 与 web-server。关闭该开关只禁用新增保存和失败重试，不会禁用备注、归档或恢复；要冻结全部 Web 写入，必须停止 web-server 或在反向代理处隔离写请求。
+登录后先验证只读资料库；确认 Redis、MinIO、worker/beat 与 ingestion queues ready，
+再开放 gateway 与 web-server 的用户流量。保存与条目管理能力始终组成运行时；要冻结
+全部 Web 写入，必须停止 web-server/gateway 或在反向代理处隔离写请求。
 
 ## 变量参考
 
@@ -461,20 +452,18 @@ event + delivery ledger；旧 `ingest-completion` queue 不再生产，也不依
 | --- | --- | --- | --- | --- | --- |
 | `AGENT_TIMEOUT_SECONDS` | Agent workflow | `45` | 可选 tuning | 否 | app |
 | `AGENT_TOOL_TIMEOUT_SECONDS` | 单次 tool | `15` | 可选 tuning；小于外层 timeout | 否 | app |
-| `AGENT_REQUEST_LIMIT` | planner/model | `8` | 安全上限 | 否 | app |
-| `AGENT_TOOL_CALLS_LIMIT` | planner/tools | `10` | 安全上限 | 否 | app |
-| `AGENT_OUTPUT_TOKEN_LIMIT` | planner/composer attempts | `2000` | 安全上限 | 否 | app |
-| `AGENT_COMPOSER_MAX_TOKENS` | composer provider request | `1000` | provider cap | 否 | app |
+| `AGENT_REQUEST_LIMIT` | primary Turn Agent | `8` | 安全上限 | 否 | app |
+| `AGENT_TOOL_CALLS_LIMIT` | primary Turn Agent tools | `10` | 安全上限 | 否 | app |
+| `AGENT_OUTPUT_TOKEN_LIMIT` | Turn Agent / Composer repair | `2000` | 每阶段安全上限 | 否 | app |
+| `AGENT_COMPOSER_MAX_TOKENS` | Composer repair request | `1000` | 单次同证据修复 provider cap | 否 | app |
 | `CONTEXT_MAX_TURNS` | conversation history | `8` | 上下文 tuning | 否 | app |
 | `CONTEXT_TOKEN_BUDGET` | conversation history | `6000` | 上下文 tuning | 否 | app |
 | `CHANNEL_LINK_TTL_SECONDS` | cross-channel linking | `600` | 使用绑定码时 | 否 | app |
 
-### 功能开关与回收站
+### 回收站与维护
 
 | 变量 | 消费者 | 默认值 | 何时需要 | Secret | 重启 |
 | --- | --- | --- | --- | --- | --- |
-| `AGENT_SAVE_ENABLED` | app tool composition | `false` | full profile readiness 后开启 | 否 | app |
-| `AGENT_ITEM_MANAGEMENT_ENABLED` | app tool composition | `false` | full profile readiness 后开启 | 否 | app |
 | `TRASH_RETENTION_DAYS` | management/maintenance | `30` | item management | 否 | app、worker、beat |
 | `TRASH_PURGE_INTERVAL_SECONDS` | Celery beat | `3600` | item management | 否 | beat |
 | `TRASH_PURGE_BATCH_SIZE` | purge worker | `20` | item management | 否 | worker |

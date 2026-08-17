@@ -96,8 +96,6 @@ MCP_HOST=127.0.0.1
 MCP_PORT=8800
 MCP_PATH=/mcp
 MCP_URL_TOKEN_MODE=true
-AGENT_SAVE_ENABLED=false
-AGENT_ITEM_MANAGEMENT_ENABLED=false
 ```
 
 Create `/etc/notebook-agent/migrations.env` separately as root, mode `0600`.
@@ -157,9 +155,9 @@ the one-shot `minio-init` container, the worker pongs and lists both queues,
 there is exactly one Beat process, and `/api/v1/health` succeeds on loopback and
 HTTPS. Complete a real Gmail login and verify browser Web Storage is empty.
 
-Only after all gates are green, set `AGENT_SAVE_ENABLED=true` and
-`AGENT_ITEM_MANAGEMENT_ENABLED=true`, restart the worker and combined runtime,
-and re-run readiness checks.
+Save and item-management capabilities have no environment switches. Admit the
+combined runtime to user traffic only after all gates are green, then re-run
+readiness checks.
 
 ## Dynamic evaluator grant
 

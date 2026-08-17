@@ -32,7 +32,7 @@ def _request(question: str = "查资料") -> AgentRequest:
 
 
 def _settings(**kwargs):
-    return replace(Settings(), agent_bounded_autonomy_enabled=True, agent_timeout_seconds=2, **kwargs)
+    return replace(Settings(), agent_timeout_seconds=2, **kwargs)
 
 
 class _FlakyReadServices:
@@ -445,7 +445,7 @@ async def test_inventory_success_plus_read_exhaustion_returns_canonical_partial(
 
     result = await KnowledgeAgent(
         FunctionModel(model),
-        _settings(agent_item_management_enabled=True),
+        _settings(),
         lambda _request: services,
         action_factory=lambda _request: AgentActionServices(
             submission=None,
@@ -502,8 +502,6 @@ async def test_inventory_success_plus_provider_failure_returns_canonical_partial
     result = await KnowledgeAgent(
         FunctionModel(model),
         _settings(
-            agent_save_enabled=False,
-            agent_item_management_enabled=True,
         ),
         lambda _request: _FlakyReadServices(failures=0),
         action_factory=lambda _request: AgentActionServices(

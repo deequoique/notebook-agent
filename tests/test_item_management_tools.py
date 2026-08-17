@@ -551,7 +551,6 @@ async def test_management_canonical_history_drives_next_page_on_second_agent_tur
 
     settings = replace(
         Settings(),
-        agent_item_management_enabled=True,
         agent_timeout_seconds=2,
     )
     runtime = KnowledgeAgent(FunctionModel(model), settings, lambda _request: object(), action_factory=actions)
@@ -615,7 +614,7 @@ async def test_agent_delete_confirmation_code_fails_closed_for_stale_plain_reply
         )
 
     settings = replace(
-        Settings(), agent_item_management_enabled=True, agent_timeout_seconds=2
+        Settings(), agent_timeout_seconds=2
     )
     runtime = KnowledgeAgent(
         FunctionModel(model), settings, lambda _request: object(),
@@ -652,9 +651,7 @@ async def test_agent_delete_confirmation_code_fails_closed_for_stale_plain_reply
 
 
 def test_management_tool_schemas_have_only_safe_model_arguments():
-    enabled = build_agent("test", management_enabled=True)
-    disabled = build_agent("test", management_enabled=False)
-    tools = enabled._function_toolset.tools
+    tools = build_agent("test")._function_toolset.tools
     assert {
         "list_saved_items",
         "get_saved_item",
@@ -664,11 +661,6 @@ def test_management_tool_schemas_have_only_safe_model_arguments():
         "restore_saved_items",
         "retry_item_ingestion",
     } <= set(tools)
-    assert not {
-        "list_saved_items",
-        "get_saved_item",
-        "delete_saved_items",
-    } & set(disabled._function_toolset.tools)
     for name in (
         "list_saved_items",
         "get_saved_item",
@@ -859,7 +851,6 @@ async def test_channel_service_delete_anchor_advances_through_clarification(sqli
 
     settings = replace(
         Settings(),
-        agent_item_management_enabled=True,
         agent_timeout_seconds=2,
     )
     agent = KnowledgeAgent(
@@ -949,7 +940,6 @@ async def test_channel_service_new_blocks_applying_delete_and_recovers_stale_cla
 
     settings = replace(
         Settings(),
-        agent_item_management_enabled=True,
         agent_timeout_seconds=2,
     )
     agent = KnowledgeAgent(
@@ -1071,7 +1061,6 @@ async def test_channel_service_effect_failure_advances_anchor_for_retry(sqlite_f
 
     settings = replace(
         Settings(),
-        agent_item_management_enabled=True,
         agent_timeout_seconds=2,
     )
     agent = KnowledgeAgent(
@@ -1154,7 +1143,6 @@ async def test_channel_service_replacement_code_reanchors_stale_reply(sqlite_fac
 
     settings = replace(
         Settings(),
-        agent_item_management_enabled=True,
         agent_timeout_seconds=2,
     )
     agent = KnowledgeAgent(
@@ -1290,7 +1278,6 @@ async def test_channel_service_delete_code_lifecycle_cancel_consume_expire_repla
 
     settings = replace(
         Settings(),
-        agent_item_management_enabled=True,
         agent_timeout_seconds=2,
     )
     agent = KnowledgeAgent(

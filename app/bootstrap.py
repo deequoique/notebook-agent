@@ -52,20 +52,18 @@ def build_knowledge_agent(
     def service_factory(request):
         return KnowledgeServices(request.tenant, factory, embedder=embedder)
 
-    action_factory = None
-    if settings.agent_save_enabled or settings.agent_item_management_enabled:
-        action_services = AgentActionServices(
-            submission=build_ingest_submission_service(
-                factory, publish_ingest_dispatch, settings
-            ),
-            pending=PendingConfirmationService(factory),
-            management=KnowledgeItemManagementService(
-                factory, retention_days=settings.trash_retention_days
-            ),
-        )
+    action_services = AgentActionServices(
+        submission=build_ingest_submission_service(
+            factory, publish_ingest_dispatch, settings
+        ),
+        pending=PendingConfirmationService(factory),
+        management=KnowledgeItemManagementService(
+            factory, retention_days=settings.trash_retention_days
+        ),
+    )
 
-        def action_factory(_request):
-            return action_services
+    def action_factory(_request):
+        return action_services
 
     # ``configure_trusted_ca`` exports the resolved bundle through the standard
     # Python TLS environment before provider construction.  Do not create a

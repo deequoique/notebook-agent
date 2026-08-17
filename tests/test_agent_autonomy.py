@@ -12,9 +12,6 @@ from app.agent.autonomy import (
     TurnTodoStore,
     normalize_todo_snapshot,
 )
-from app.config import Settings
-
-
 def _item(step_id: str, title: str, status: str = "pending") -> TurnTodoItem:
     return TurnTodoItem(id=step_id, title=title, status=status)  # type: ignore[arg-type]
 
@@ -175,22 +172,3 @@ def test_error_envelope_is_allow_listed_and_redacts_private_values():
             operation="read",
             safe_message="The read is unavailable.",
         )
-
-
-def test_bounded_autonomy_setting_is_default_off_and_validates_environment(monkeypatch):
-    # Settings has required service defaults; explicit URLs keep this focused
-    # test independent of a developer's local .env file.
-    monkeypatch.setenv("DATABASE_URL", "sqlite+pysqlite:///:memory:")
-    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
-    monkeypatch.delenv("AGENT_BOUNDED_AUTONOMY_ENABLED", raising=False)
-    assert Settings().agent_bounded_autonomy_enabled is False
-
-    monkeypatch.setenv("AGENT_BOUNDED_AUTONOMY_ENABLED", "yes")
-    assert Settings().agent_bounded_autonomy_enabled is True
-    monkeypatch.setenv("AGENT_BOUNDED_AUTONOMY_ENABLED", "off")
-    assert Settings().agent_bounded_autonomy_enabled is False
-    monkeypatch.setenv("AGENT_BOUNDED_AUTONOMY_ENABLED", "sometimes")
-    with pytest.raises(ValueError, match="AGENT_BOUNDED_AUTONOMY_ENABLED"):
-        Settings()
-    with pytest.raises(ValueError, match="AGENT_BOUNDED_AUTONOMY_ENABLED"):
-        Settings(agent_bounded_autonomy_enabled="yes")  # type: ignore[arg-type]

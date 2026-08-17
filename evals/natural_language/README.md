@@ -5,8 +5,6 @@ This opt-in evaluator calls the configured real model through the official MCP v
 Required configuration includes the normal PostgreSQL/pgvector, Redis, Celery `ingest` and `maintenance` queues, MinIO, embedding and Agent provider variables, plus:
 
 ```bash
-export AGENT_SAVE_ENABLED=true
-export AGENT_ITEM_MANAGEMENT_ENABLED=true
 export NATURAL_LANGUAGE_EVAL_ENABLED=true
 export NATURAL_LANGUAGE_EVAL_USER_ID=123
 ```
