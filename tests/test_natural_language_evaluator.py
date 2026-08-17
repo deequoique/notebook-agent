@@ -90,8 +90,6 @@ def test_preflight_bounds_database_exception_text(monkeypatch, tmp_path):
         notebook_agent_env="development",
         agent_api_key="configured",
         zhipu_api_key="configured",
-        agent_save_enabled=True,
-        agent_item_management_enabled=True,
     )
     monkeypatch.setattr(
         "evals.natural_language.runner.get_session_factory", lambda: BrokenFactory()
@@ -108,8 +106,6 @@ def test_preflight_refuses_production_before_opening_database(monkeypatch, tmp_p
         notebook_agent_log_retrieval_content=False,
         agent_api_key="configured",
         zhipu_api_key="configured",
-        agent_save_enabled=True,
-        agent_item_management_enabled=True,
     )
     monkeypatch.setattr(
         "evals.natural_language.runner.get_session_factory",

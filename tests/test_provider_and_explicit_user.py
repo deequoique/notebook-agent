@@ -144,12 +144,11 @@ def test_ingest_and_retrieval_require_explicit_user_id():
         assert parameter.default is inspect.Parameter.empty
 
 
-def test_save_enabled_composition_builds_real_action_services():
+def test_action_services_are_always_composed():
     factory = lambda: None
     agent = build_knowledge_agent(
         replace(
             Settings(),
-            agent_save_enabled=True,
             zhipu_api_key=None,
         ),
         session_factory=factory,
@@ -160,17 +159,3 @@ def test_save_enabled_composition_builds_real_action_services():
     assert isinstance(services, AgentActionServices)
     assert isinstance(services.submission, IngestSubmissionService)
     assert isinstance(services.pending, PendingConfirmationService)
-
-
-def test_save_disabled_composition_has_no_action_factory():
-    agent = build_knowledge_agent(
-        replace(
-            Settings(),
-            agent_save_enabled=False,
-            agent_item_management_enabled=False,
-            zhipu_api_key=None,
-        ),
-        session_factory=lambda: None,
-    )
-
-    assert agent._action_factory is None

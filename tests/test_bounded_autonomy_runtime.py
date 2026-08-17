@@ -62,9 +62,7 @@ def request(question: str = "你好") -> AgentRequest:
 
 
 def autonomy_settings():
-    return replace(
-        Settings(), agent_bounded_autonomy_enabled=True, agent_timeout_seconds=2
-    )
+    return replace(Settings(), agent_timeout_seconds=2)
 
 
 class Management:
@@ -245,11 +243,16 @@ async def test_flag_on_explicit_url_question_cannot_finish_without_search():
     assert services.calls == []
 
 
-def test_flag_on_registers_only_turn_local_todo_tool():
-    enabled = build_agent(TestModel(), bounded_autonomy_enabled=True)
-    disabled = build_agent(TestModel(), bounded_autonomy_enabled=False)
-    assert "todo_write" in enabled._function_toolset.tools
-    assert "todo_write" not in disabled._function_toolset.tools
+def test_primary_agent_always_registers_bounded_and_management_tools():
+    agent = build_agent(TestModel())
+    assert {
+        "todo_write",
+        "search_segments",
+        "save_videos",
+        "list_saved_items",
+        "delete_saved_items",
+        "restore_saved_items",
+    } <= set(agent._function_toolset.tools)
 
 
 async def _visible_tools(
@@ -265,13 +268,11 @@ async def _visible_tools(
             observed[tool.name] = tool.parameters_json_schema
         return ModelResponse(parts=[TextPart("请问需要我澄清什么？")])
 
-    action_factory = None
-    if settings.agent_save_enabled or settings.agent_item_management_enabled:
-        action_factory = lambda _request: AgentActionServices(
-            submission=None,  # type: ignore[arg-type]
-            pending=pending or PendingState(),  # type: ignore[arg-type]
-            management=(Management([]) if settings.agent_item_management_enabled else None),
-        )
+    action_factory = lambda _request: AgentActionServices(
+        submission=None,  # type: ignore[arg-type]
+        pending=pending or PendingState(),  # type: ignore[arg-type]
+        management=Management([]),  # type: ignore[arg-type]
+    )
     await KnowledgeAgent(
         FunctionModel(model),
         settings,
@@ -282,28 +283,32 @@ async def _visible_tools(
 
 
 @pytest.mark.asyncio
-async def test_flag_on_tool_visibility_follows_features_pending_kind_and_exact_scope():
-    base = replace(
-        autonomy_settings(),
-        agent_save_enabled=False,
-        agent_item_management_enabled=False,
-    )
+async def test_tool_visibility_follows_pending_kind_and_exact_scope():
+    base = autonomy_settings()
     base_tools = await _visible_tools(settings=base)
-    assert set(base_tools) == {"search_segments", "todo_write"}
-
-    save_no_pending = await _visible_tools(
-        settings=replace(base, agent_save_enabled=True)
-    )
+    assert {
+        "search_segments",
+        "todo_write",
+        "list_saved_items",
+        "get_saved_item",
+        "update_saved_item",
+        "delete_saved_items",
+        "restore_saved_items",
+        "retry_item_ingestion",
+        "save_videos",
+    } <= set(base_tools)
     assert not {
         "request_save_confirmation",
-        "save_videos",
         "confirm_video_save",
         "clarify_save_confirmation",
         "cancel_video_save",
-    } & set(save_no_pending)
+        "confirm_item_deletion",
+        "clarify_item_deletion",
+        "cancel_item_deletion",
+    } & set(base_tools)
 
     save_pending = await _visible_tools(
-        settings=replace(base, agent_save_enabled=True),
+        settings=base,
         pending=PendingState(save=True),
     )
     assert {
@@ -311,14 +316,10 @@ async def test_flag_on_tool_visibility_follows_features_pending_kind_and_exact_s
         "clarify_save_confirmation",
         "cancel_video_save",
     } <= set(save_pending)
-    assert "save_videos" not in save_pending
+    assert "save_videos" in save_pending
 
     scoped_save = await _visible_tools(
-        settings=replace(
-            base,
-            agent_save_enabled=True,
-            agent_item_management_enabled=True,
-        ),
+        settings=base,
         question="请保存 https://youtu.be/dQw4w9WgXcQ 到知识库",
         pending=PendingState(save=True, delete=True),
     )
@@ -330,25 +331,8 @@ async def test_flag_on_tool_visibility_follows_features_pending_kind_and_exact_s
         "confirm_item_deletion",
     } & set(scoped_save)
 
-    management = await _visible_tools(
-        settings=replace(base, agent_item_management_enabled=True)
-    )
-    assert {
-        "list_saved_items",
-        "get_saved_item",
-        "update_saved_item",
-        "delete_saved_items",
-        "restore_saved_items",
-        "retry_item_ingestion",
-    } <= set(management)
-    assert not {
-        "confirm_item_deletion",
-        "clarify_item_deletion",
-        "cancel_item_deletion",
-    } & set(management)
-
     delete_pending = await _visible_tools(
-        settings=replace(base, agent_item_management_enabled=True),
+        settings=base,
         pending=PendingState(delete=True),
     )
     assert {
@@ -366,26 +350,6 @@ async def test_flag_on_tool_visibility_follows_features_pending_kind_and_exact_s
             "pending_action",
             "claim",
         } & parameter_names
-
-
-@pytest.mark.asyncio
-async def test_flag_off_keeps_legacy_pending_tool_visibility_without_pending_state():
-    tools = await _visible_tools(
-        settings=replace(
-            autonomy_settings(),
-            agent_bounded_autonomy_enabled=False,
-            agent_save_enabled=True,
-            agent_item_management_enabled=False,
-        )
-    )
-    assert {
-        "request_save_confirmation",
-        "save_videos",
-        "confirm_video_save",
-        "clarify_save_confirmation",
-        "cancel_video_save",
-    } <= set(tools)
-
 
 @pytest.mark.asyncio
 async def test_incomplete_todo_finalization_fails_closed_without_persisting_content():
@@ -457,9 +421,7 @@ async def test_flag_on_inventory_read_is_a_nonterminal_observation():
 
     result = await KnowledgeAgent(
         FunctionModel(model),
-        replace(
-            autonomy_settings(), agent_item_management_enabled=True
-        ),
+        autonomy_settings(),
         lambda _: services,
         action_factory=lambda _request: AgentActionServices(
             submission=None, pending=Pending(), management=Management(rows)  # type: ignore[arg-type]
@@ -502,11 +464,7 @@ async def test_flag_on_inventory_transient_failure_retries_exact_read_once():
 
     result = await KnowledgeAgent(
         FunctionModel(model),
-        replace(
-            autonomy_settings(),
-            agent_save_enabled=False,
-            agent_item_management_enabled=True,
-        ),
+        autonomy_settings(),
         lambda _request: Services(),
         action_factory=lambda _request: AgentActionServices(
             submission=None,  # type: ignore[arg-type]
@@ -568,7 +526,7 @@ async def test_flag_on_list_then_scoped_search_uses_only_observed_second_item():
     services.search_segments = tracked_search
     result = await KnowledgeAgent(
         FunctionModel(model),
-        replace(autonomy_settings(), agent_item_management_enabled=True),
+        autonomy_settings(),
         lambda _: services,
         action_factory=lambda _request: AgentActionServices(
             submission=None, pending=Pending(), management=Management(rows)  # type: ignore[arg-type]
@@ -702,7 +660,7 @@ async def test_flag_on_unobserved_item_scope_fails_closed_without_backend_search
 
     result = await KnowledgeAgent(
         FunctionModel(model),
-        replace(autonomy_settings(), agent_item_management_enabled=True),
+        autonomy_settings(),
         lambda _: services,
         action_factory=lambda _request: AgentActionServices(
             submission=None, pending=Pending(), management=Management(rows)  # type: ignore[arg-type]

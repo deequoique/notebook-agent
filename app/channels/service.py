@@ -64,17 +64,11 @@ class ChannelService:
         self._settings = settings
         self._web_auth = web_auth
         self._locks: dict[tuple[str, str, str, str], asyncio.Lock] = {}
-        # The context projection is part of the opt-in bounded-autonomy path.
-        # Keep the legacy flag-off request hot path free of its extra DB read.
-        self._context_builder = (
-            ContextBuilder(
-                max_turns=getattr(settings, "context_max_turns", 8),
-                # Keep the context projection independent from the larger
-                # model message history budget; these are deliberately small
-                # row caps.
-            )
-            if bool(getattr(settings, "agent_bounded_autonomy_enabled", False))
-            else None
+        self._context_builder = ContextBuilder(
+            max_turns=getattr(settings, "context_max_turns", 8),
+            # Keep the context projection independent from the larger
+            # model message history budget; these are deliberately small
+            # row caps.
         )
 
     async def handle(self, envelope: ChannelEnvelope) -> AgentAnswer:

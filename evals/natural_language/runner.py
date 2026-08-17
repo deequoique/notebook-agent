@@ -131,8 +131,6 @@ def preflight(settings: Settings, config: EvalConfig) -> dict[str, bool]:
         raise EvalPreflightError("AGENT_API_KEY is required; evaluator will not use a fake model")
     if not settings.zhipu_api_key:
         raise EvalPreflightError("ZHIPU_API_KEY is required for full retrieval and ingestion")
-    if not settings.agent_save_enabled or not settings.agent_item_management_enabled:
-        raise EvalPreflightError("AGENT_SAVE_ENABLED and AGENT_ITEM_MANAGEMENT_ENABLED must both be true")
     if settings.notebook_agent_env == "production":
         raise EvalPreflightError("refusing to run persistent evaluation in production")
     try:

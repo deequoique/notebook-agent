@@ -16,7 +16,7 @@ items. It also covers ingestion work that races with deletion or restoration.
   string to `null`, enforce the public length bound, and keep identical writes
   idempotent.
 - Management mutations and confirmations bypass retrieval composition and
-  remain terminal canonical outcomes. With bounded autonomy enabled,
+  remain terminal canonical outcomes. Bounded autonomy is the only runtime;
   inventory/detail reads are non-terminal observations and may be followed by
   item-scoped knowledge retrieval in the same turn. A read-only-only turn still
   renders canonical server-owned inventory text. Persist only bounded public
@@ -65,7 +65,8 @@ items. It also covers ingestion work that races with deletion or restoration.
   so a successful restore cannot remain hidden in the archive view.
 - Soft deletion sets `deleted_at` using PostgreSQL time. All vector, BM25,
   hydration, neighbor, detail, and open-at retrieval paths require
-  `deleted_at IS NULL`; disabling management tools must not remove these gates.
+  `deleted_at IS NULL`. Management tools are always composed; these gates are
+  independent defense in depth.
 - Re-saving the same URL during retention restores the existing row. A new
   non-null `why_saved` replaces the old value; null preserves it.
 - Explicit retry is accepted only for a stable failed active item with no
@@ -96,8 +97,8 @@ items. It also covers ingestion work that races with deletion or restoration.
   claim for bounded claim-timeout recovery and emit privacy-safe counters with
   `timed_out` and `timeout_phase`.
 - Downgrade must refuse while soft-deleted rows exist. Operational rollback
-  requires management/Beat disablement, a backup, an explicit restore-or-purge
-  decision, migration verification, and retrieval smoke tests.
+  requires gateway/Web isolation plus Beat shutdown, a backup, an explicit
+  restore-or-purge decision, migration verification, and retrieval smoke tests.
 - When independently shipped feature migrations branch from the same released
   revision, preserve both historical files and add a no-op Alembic merge
   revision. Never rewrite a deployed sibling migration or re-parent another

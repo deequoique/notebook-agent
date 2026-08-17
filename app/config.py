@@ -25,7 +25,7 @@ load_dotenv()
 # The answer Composer allows one structured-output repair in a run. Keep this
 # constant next to configuration validation so the provider cap and the
 # post-response safety budget cannot drift apart.
-COMPOSER_VALIDATION_REQUEST_LIMIT = 2
+COMPOSER_VALIDATION_REQUEST_LIMIT = 1
 
 
 def _env(name: str, default: str | None = None) -> str | None:
@@ -283,20 +283,8 @@ class Settings:
     agent_output_token_limit: int = field(
         default_factory=lambda: _env_int("AGENT_OUTPUT_TOKEN_LIMIT", 2000)
     )
-    # Opt-in bounded single-Agent autonomy; rollout remains configuration-only.
-    agent_bounded_autonomy_enabled: bool = field(
-        default_factory=lambda: _env_bool("AGENT_BOUNDED_AUTONOMY_ENABLED", False)
-    )
     agent_composer_max_tokens: int = field(
         default_factory=lambda: _env_int("AGENT_COMPOSER_MAX_TOKENS", 1000)
-    )
-    agent_save_enabled: bool = field(
-        default_factory=lambda: _env_bool("AGENT_SAVE_ENABLED", False)
-    )
-    # Inventory/CRUD rollout is intentionally independent from save actions.
-    # Deleted-content filters remain active even when this flag is disabled.
-    agent_item_management_enabled: bool = field(
-        default_factory=lambda: _env_bool("AGENT_ITEM_MANAGEMENT_ENABLED", False)
     )
     trash_retention_days: int = field(
         default_factory=lambda: _env_int("TRASH_RETENTION_DAYS", 30)
@@ -562,8 +550,6 @@ class Settings:
     def __post_init__(self) -> None:
         if self.notebook_agent_env not in {"development", "production"}:
             raise ValueError("NOTEBOOK_AGENT_ENV must be development or production")
-        if not isinstance(self.agent_bounded_autonomy_enabled, bool):
-            raise ValueError("AGENT_BOUNDED_AUTONOMY_ENABLED must be a boolean")
         if (
             self.notebook_agent_log_retrieval_content
             and self.notebook_agent_env != "development"
