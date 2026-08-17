@@ -50,7 +50,7 @@
 
 - [x] Run Trellis check/review against PRD and design.
 - [x] Update `.trellis/spec/backend/browser-companion-capture.md` only for durable new behavior or test requirements learned from the fix.
-- [ ] Commit the task-scoped changes, record validation evidence, and archive/finish the Trellis task.
+- [x] Commit the task-scoped changes, record validation evidence, and archive/finish the Trellis task.
 
 ## Rollback points
 
