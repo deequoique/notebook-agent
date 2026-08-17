@@ -1,0 +1,9 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend development entry point and quality checklist."}
+{"file":".trellis/spec/backend/agent-retrieval-convergence.md","reason":"Authoritative primary-Agent, Composer, retrieval budget, citation, fallback, persistence, and bounded-autonomy invariants."}
+{"file":".trellis/spec/backend/knowledge-item-management.md","reason":"Authoritative tool, terminal action, destructive confirmation, tenant, and item lifecycle invariants."}
+{"file":".trellis/spec/backend/provider-tls-diagnostics.md","reason":"Authoritative request diagnostics and production redaction contract across Agent phases."}
+{"file":".trellis/spec/backend/web-browser-runtime.md","reason":"Web composition ownership affected by making submission and retry always enabled."}
+{"file":".trellis/spec/backend/deployment-lifecycle.md","reason":"Deployment configuration ownership affected by removing three runtime environment switches."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Guidance for extracting shared policy without duplicating behavior."}
+{"file":".trellis/tasks/08-17-modularize-agent-runtime/research/current-runtime-map.md","reason":"Current ownership, compatibility import surface, and high-value regression suites."}
+{"file":".trellis/tasks/08-17-modularize-agent-runtime/research/flag-removal-impact.md","reason":"Inventory of runtime, composition, documentation, test, and security impacts from the always-on decision."}
