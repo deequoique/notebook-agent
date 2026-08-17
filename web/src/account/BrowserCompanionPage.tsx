@@ -8,6 +8,7 @@ import {
   listBrowserCompanionDevices,
   revokeBrowserCompanionDevice,
 } from "../api/client";
+import { BROWSER_COMPANION_DOWNLOAD_URL } from "../app/browserCompanion";
 
 const PAIRING_ID_RE = /^[a-f0-9]{32}$/;
 
@@ -29,6 +30,7 @@ export function BrowserCompanionPage() {
   const devices = useQuery({
     queryKey: ["browser-companion", "devices"],
     queryFn: listBrowserCompanionDevices,
+    refetchInterval: (query) => pairingId && query.state.data?.devices.length === 0 ? 2_000 : false,
   });
   const approve = useMutation({
     mutationFn: () => approveBrowserCompanionPairing(pairingId),
@@ -61,14 +63,15 @@ export function BrowserCompanionPage() {
             disabled={!validPairing || approve.isPending || approve.isSuccess}
             onClick={() => approve.mutate()}
           >
-            {approve.isPending ? "正在连接…" : approve.isSuccess ? "已连接" : "允许连接"}
+            {approve.isPending ? "正在批准…" : approve.isSuccess ? "已批准" : "允许连接"}
           </button>
         </section>
       ) : (
         <section className="account-link-card companion-pairing" aria-labelledby="companion-install-title">
           <p className="step-number" aria-hidden="true">01</p>
           <h2 id="companion-install-title">按需安装和使用</h2>
-          <p>从插件弹窗发起配对后，本页会显示确认按钮。你也可以随时在浏览器里禁用或卸载插件。</p>
+          <p>下载并在 Chrome 中加载插件，再从插件弹窗发起配对。你也可以随时在浏览器里禁用或卸载插件。</p>
+          <a className="button button--primary button--wide" download href={BROWSER_COMPANION_DOWNLOAD_URL}>下载浏览器伴侣</a>
         </section>
       )}
 

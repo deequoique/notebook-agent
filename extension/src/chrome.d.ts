@@ -1,6 +1,7 @@
 declare namespace chrome {
   namespace runtime {
     const lastError: { message?: string } | undefined;
+    function getManifest(): { host_permissions?: string[] };
     function sendMessage(message: unknown): Promise<unknown>;
     const onMessage: { addListener(callback: (message: unknown, sender: unknown, respond: (response: unknown) => void) => boolean | void): void };
   }

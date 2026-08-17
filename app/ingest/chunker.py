@@ -80,7 +80,10 @@ def _hard_cut(
         next_start = end - 1
         while next_start > start + 1 and cues[next_start - 1].end > overlap_start:
             next_start -= 1
-        start = next_start
+        # A gap larger than the 120s ceiling can make ``end == start + 1``.
+        # In that case ``end - 1`` points back to the same cue, so overlap
+        # must yield to the stronger invariant that every iteration advances.
+        start = max(start + 1, next_start)
     return result
 
 

@@ -42,6 +42,14 @@ from app.ingest.notifications import IngestNotificationPoller
 from app.tls import configure_trusted_ca
 
 
+# Per-cue semantic boundaries are useful for short/medium transcripts, but a
+# multi-hour recording can contain thousands of tiny cues. Embedding every cue
+# before embedding the final chunks multiplies provider calls without changing
+# the hard 120-second safety boundary. Long tracks use deterministic hard cuts
+# and reserve provider work for the final searchable chunks.
+MAX_SEMANTIC_BOUNDARY_CUES = 512
+
+
 COMPLETION_QUEUE = "ingest-completion"
 COMPLETION_TASK_NAME = "app.ingest.completion.consume"
 _COMPLETION_QUEUES = (
@@ -253,19 +261,19 @@ def process_item(item_id: int, *, connector: Any | None = None, embedder: Embedd
         settings = get_settings()
         store = object_store
         capture = None
-        if connector is None:
+        item_user_id = getattr(item, "user_id", None)
+        if connector is None and item_user_id is not None:
             capture = db.scalar(
                 select(BrowserCapture)
-                .join(
-                    IngestDispatch,
-                    BrowserCapture.dispatch_id == IngestDispatch.id,
-                )
                 .where(
                     BrowserCapture.item_id == item.id,
+                    BrowserCapture.app_user_id == item_user_id,
                     BrowserCapture.state == "ready",
-                    IngestDispatch.state == "running",
                 )
-                .order_by(BrowserCapture.created_at.desc())
+                .order_by(
+                    BrowserCapture.created_at.desc(),
+                    BrowserCapture.id.desc(),
+                )
                 .limit(1)
             )
         pre_stored = capture is not None
@@ -372,7 +380,16 @@ def process_item(item_id: int, *, connector: Any | None = None, embedder: Embedd
             remaining_embedding_chars -= requested
             return embedder.embed(texts)
 
-        chunks = chunk(result.cues, lang=result.lang, chapters=item.chapters, semantic_embedder=semantic)
+        chunks = chunk(
+            result.cues,
+            lang=result.lang,
+            chapters=item.chapters,
+            semantic_embedder=(
+                semantic
+                if not pre_stored or len(result.cues) <= MAX_SEMANTIC_BOUNDARY_CUES
+                else None
+            ),
+        )
         if len(chunks) > settings.ingest_max_segments_per_item:
             raise IngestLimitExceeded()
         vectors = semantic([part.text for part in chunks])

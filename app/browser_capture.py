@@ -28,9 +28,10 @@ _KALTURA_ID_RE = re.compile(r"^[0-9]+_[A-Za-z0-9]+$")
 _YOUTUBE_HOSTS = frozenset(
     {"youtu.be", "youtube.com", "www.youtube.com", "m.youtube.com"}
 )
-_KALTURA_HOSTS = frozenset(
+_KALTURA_REFERENCE_HOSTS = frozenset(
     {"ntulearn.ntu.edu.sg", "ntulearnvideo.ntu.edu.sg"}
 )
+_KALTURA_PAGE_HOSTS = _KALTURA_REFERENCE_HOSTS | {"ntulearnv1.ntu.edu.sg"}
 _YOUTUBE_COVER_HOSTS = frozenset({"i.ytimg.com", "img.youtube.com"})
 
 
@@ -181,7 +182,7 @@ def canonicalize_reference(platform: Platform, platform_id: str, url: str) -> st
         if observed_id != platform_id:
             raise CaptureContractError()
         return f"https://www.youtube.com/watch?v={platform_id}"
-    if not _KALTURA_ID_RE.fullmatch(platform_id) or host not in _KALTURA_HOSTS:
+    if not _KALTURA_ID_RE.fullmatch(platform_id) or host not in _KALTURA_REFERENCE_HOSTS:
         raise CaptureContractError()
     if platform_id not in parts.path and platform_id not in parts.query:
         raise CaptureContractError()
@@ -193,7 +194,7 @@ def canonicalize_page_url(platform: Platform, url: str) -> str:
     if parts.scheme != "https" or parts.username or parts.password:
         raise CaptureContractError()
     host = (parts.hostname or "").lower()
-    allowed = _YOUTUBE_HOSTS if platform == "youtube" else _KALTURA_HOSTS
+    allowed = _YOUTUBE_HOSTS if platform == "youtube" else _KALTURA_PAGE_HOSTS
     if host not in allowed:
         raise CaptureContractError()
     return urlunsplit(("https", host, parts.path or "/", "", ""))

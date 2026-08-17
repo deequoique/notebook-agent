@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 import inspect
-import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -120,12 +119,6 @@ class BrowserCaptureSubmissionService:
             if content_hash is not None
             else None
         )
-        deadline = (
-            time.monotonic() + publish_budget_seconds
-            if publish_budget_seconds is not None
-            else None
-        )
-
         try:
             admitted = self._admit(
                 scope,
@@ -155,17 +148,18 @@ class BrowserCaptureSubmissionService:
                 )
         self._mark_capture_ready(capture_id)
 
-        remaining = deadline - time.monotonic() if deadline is not None else None
         try:
-            if remaining is not None and remaining <= 0:
-                raise TimeoutError("broker_publish_timeout")
-            if self._publisher_accepts_budget and remaining is not None:
+            if (
+                self._publisher_accepts_budget
+                and publish_budget_seconds is not None
+            ):
                 task_id = self._publisher(
-                    dispatch_id, remaining_budget_seconds=remaining
+                    dispatch_id,
+                    remaining_budget_seconds=publish_budget_seconds,
                 )
             else:
                 task_id = self._publisher(dispatch_id)
-        except Exception as exc:
+        except Exception:
             self._mark_failed(capture_id, dispatch_id, "queue_unavailable")
             raise BrowserCaptureSubmissionError("queue_unavailable") from None
         self._mark_enqueued(dispatch_id, task_id)
@@ -381,7 +375,14 @@ class BrowserCaptureSubmissionService:
 
     def _mark_enqueued(self, dispatch_id: int, task_id: str | None) -> None:
         with self._session_factory() as db:
-            dispatch = db.get(IngestDispatch, dispatch_id)
+            # The worker can claim and finish the dispatch while the broker
+            # publisher is returning. Lock before checking pending so this
+            # transition cannot overwrite a faster worker state.
+            dispatch = db.scalar(
+                select(IngestDispatch)
+                .where(IngestDispatch.id == dispatch_id)
+                .with_for_update()
+            )
             if dispatch is None or dispatch.state != "pending":
                 return
             dispatch.state = "enqueued"
@@ -391,8 +392,20 @@ class BrowserCaptureSubmissionService:
 
     def _mark_failed(self, capture_id: int, dispatch_id: int, code: str) -> None:
         with self._session_factory() as db:
+            # A broker publish can be accepted before the producer loses its
+            # acknowledgement and raises.  The worker may therefore have
+            # claimed or completed this dispatch by the time the publisher's
+            # failure path runs.  Lock and re-check the dispatch before
+            # changing any related rows so a late producer error cannot
+            # downgrade a faster worker result.
+            dispatch = db.scalar(
+                select(IngestDispatch)
+                .where(IngestDispatch.id == dispatch_id)
+                .with_for_update()
+            )
+            if dispatch is None or dispatch.state != "pending":
+                return
             capture = db.get(BrowserCapture, capture_id)
-            dispatch = db.get(IngestDispatch, dispatch_id)
             if capture is not None:
                 capture.state = "failed"
                 capture.error_code = code
@@ -401,8 +414,7 @@ class BrowserCaptureSubmissionService:
                 if item is not None:
                     item.state = "failed"
                     item.fail_reason = code
-            if dispatch is not None and dispatch.state == "pending":
-                dispatch.state = "failed"
-                dispatch.error_code = code
-                dispatch.updated_at = datetime.now(UTC)
+            dispatch.state = "failed"
+            dispatch.error_code = code
+            dispatch.updated_at = datetime.now(UTC)
             db.commit()

@@ -1,5 +1,6 @@
 export type Cue = { start_sec: number; end_sec: number; text: string };
 export type Platform = "youtube" | "ntu_kaltura";
+export const CLIENT_VERSION = "0.1.3";
 export type PageCapture = {
   platform: Platform;
   platform_id: string;
@@ -31,7 +32,7 @@ export function captureRequest(capture: PageCapture) {
   const cues = capture.caption.cues;
   return contentHash(cues).then((content_hash) => ({
     protocol_version: "capture.v1" as const,
-    client_version: "0.1.0",
+    client_version: CLIENT_VERSION,
     ...capture,
     content_hash,
   }));

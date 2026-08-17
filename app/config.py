@@ -608,6 +608,16 @@ class Settings:
         ):
             raise ValueError("Web authentication durations and limits must be positive")
         for extension_origin in self.browser_companion_allowed_origins:
+            if extension_origin == "chrome-extension://*":
+                if (
+                    self.notebook_agent_env != "development"
+                    or self.web_host not in {"127.0.0.1", "localhost", "::1"}
+                ):
+                    raise ValueError(
+                        "wildcard browser companion origins require a loopback-only "
+                        "development Web server"
+                    )
+                continue
             parsed_extension = urlsplit(extension_origin)
             extension_id = parsed_extension.netloc
             if (
@@ -621,7 +631,8 @@ class Settings:
             ):
                 raise ValueError(
                     "BROWSER_COMPANION_ALLOWED_ORIGINS must contain exact "
-                    "chrome-extension origins"
+                    "chrome-extension origins, or the development-only "
+                    "chrome-extension://* wildcard"
                 )
         if self.web_auth_enabled:
             parsed_origin = urlsplit(self.web_public_origin or "")

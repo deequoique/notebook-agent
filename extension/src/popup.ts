@@ -9,11 +9,33 @@ const messages: Record<string, string> = {
   unsupported_page: "请打开 YouTube 或 NTULearn/Kaltura 视频页面后再试。",
   pairing_pending: "网页端尚未批准，请完成批准后重试。",
   pairing_expired: "配对已过期，请重新连接。",
+  pairing_used: "这次配对已经失效，请重新连接。",
+  pairing_missing: "插件里没有待完成的配对，请重新连接。",
+  extension_pairing_pending: "网页端尚未批准，请完成批准后重试。",
+  extension_pairing_expired: "配对已过期，请重新连接。",
+  extension_pairing_used: "这次配对已经失效，请重新连接。",
+  extension_pairing_invalid: "配对凭据不匹配，请重新连接。",
+  extension_origin_invalid: "服务器拒绝了当前插件来源，请重新连接；本机开发环境请检查扩展来源配置。",
+  network_unavailable: "无法连接 Notebook Agent，请确认本机服务正在运行。",
+  request_timeout: "连接 Notebook Agent 超时，请确认服务地址和网络后重试。",
+  extension_api_origin_invalid: "插件的服务地址配置无效，请重新构建并加载正确版本。",
+  request_failed: "Notebook Agent 没有完成授权，请稍后重试。",
   caption_fetch_failed: "页面字幕暂时读取失败，请刷新视频页面后重试。",
+  caption_parse_failed: "页面字幕格式暂时无法解析，请刷新视频页面后重试。",
+  stale_player_response: "视频页面刚刚切换，插件没有使用旧视频字幕；请稍后重试。",
   kaltura_entry_missing: "没有识别到 Kaltura 视频，请确认视频已加载后刷新页面重试。",
   capture_unavailable: "页面结构可能已经变化，请刷新视频页面或升级插件后重试。",
   extension_grant_revoked: "这个连接已经被撤销，请重新连接。",
 };
+
+const resetPairingErrors = new Set([
+  "pairing_expired",
+  "pairing_used",
+  "pairing_missing",
+  "extension_pairing_expired",
+  "extension_pairing_used",
+  "extension_pairing_invalid",
+]);
 
 async function send(type: string): Promise<Reply> {
   return chrome.runtime.sendMessage({ type }) as Promise<Reply>;
@@ -34,7 +56,14 @@ primary.addEventListener("click", async () => {
   statusNode.textContent = action === "capture" ? "正在读取并提交字幕…" : "正在连接…";
   const reply = await send(action === "capture" ? "CAPTURE" : action === "finish" ? "FINISH_PAIRING" : "START_PAIRING");
   if (!reply.ok) {
-    statusNode.textContent = messages[reply.error ?? ""] ?? "操作没有完成，请稍后重试。";
+    const error = reply.error ?? "request_failed";
+    statusNode.textContent = messages[error] ?? `操作没有完成（${error}），请稍后重试。`;
+    if (resetPairingErrors.has(error)) {
+      await send("DISCONNECT");
+      action = "pair";
+      primary.textContent = "重新连接";
+      disconnect.hidden = true;
+    }
     primary.disabled = false;
     return;
   }

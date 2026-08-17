@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Notebook Agent 浏览器伴侣",
-  "version": "0.1.0",
+  "version": "0.1.3",
   "description": "从当前 YouTube 或 NTULearn/Kaltura 页面保存字幕到 Notebook Agent。",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqONjDWOzvzdKkhi9aQeUYek7QvDTPJMXNFAKI6X+IyWqLcN/jAMTM9eVJBJFrnYWXMW+fXEtCzS7X6vv+JD0ehTklMo2uXWdQ8n3bh8BlMAppdHwnQFbcXDkuKaMBZIcsHo1EoCeugBKtspEMHGyP96LCVeqfNwh6vA/eTzbFFb331hrJtnE5VAwt9jK/0XFXydBwoseiB3WAYxNKlX+LhPP+4JjpMcGztJJMeXyBIiGdJqX1fYKBBrJrrfrBvZcuz879DngU3rP2k3lJFr3nDqLONHRMR0ccQvUQQtmqyupNz/+yP95++oglc4YTJz2/mh6sn3/V7XgTfNRQXoIyQIDAQAB",
   "permissions": ["activeTab", "scripting", "storage"],
@@ -10,6 +10,8 @@
     "https://youtu.be/*",
     "https://ntulearn.ntu.edu.sg/*",
     "https://ntulearnvideo.ntu.edu.sg/*",
+    "https://ntulearnv1.ntu.edu.sg/*",
+    "https://cdnapisec.kaltura.com/*",
     "https://notebookai.deequoique.tech/*"
   ],
   "background": { "service_worker": "worker.js", "type": "module" },

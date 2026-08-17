@@ -222,8 +222,30 @@ class FakeSession:
     def __exit__(self, *_args):
         return None
 
-    def scalar(self, _statement):
-        self.store.statements.append(_statement)
+    def scalar(self, statement):
+        self.store.statements.append(statement)
+        # _set_dispatch_state now locks the dispatch row with SELECT ... FOR
+        # UPDATE. Resolve that locked lookup from the in-memory dispatches so
+        # the rest of this lightweight session mirrors the production query.
+        statement_text = str(statement)
+        if (
+            "FROM ingest_dispatch" in statement_text
+            and "WHERE ingest_dispatch.id =" in statement_text
+            and "FOR UPDATE" in statement_text
+        ):
+            params = statement.compile().params
+            dispatch_id = next(
+                (value for key, value in params.items() if key.startswith("id")),
+                None,
+            )
+            return next(
+                (
+                    value
+                    for value in self.store.dispatches
+                    if value.id == dispatch_id
+                ),
+                None,
+            )
         return self.store.scalar_results.pop(0)
 
     def add(self, value):
@@ -251,6 +273,81 @@ class FakeSession:
                 None,
             )
         return None
+
+
+@pytest.mark.parametrize("worker_state", ("running", "completed"))
+def test_publish_state_update_does_not_clobber_faster_worker(worker_state):
+    dispatch = IngestDispatch(
+        id=71,
+        public_id="dispatch-public",
+        item_id=41,
+        request_key="request-key",
+        attempt=1,
+        state=worker_state,
+    )
+
+    class LockedSession:
+        def __init__(self):
+            self.statement = None
+            self.commits = 0
+
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+
+        def scalar(self, statement):
+            self.statement = statement
+            # The worker's commit is visible by the time the publisher gets
+            # the row lock. The publisher must re-check this state and return.
+            return dispatch
+
+        def commit(self): self.commits += 1
+
+    session = LockedSession()
+    service = IngestSubmissionService(lambda: session, lambda _dispatch_id: "task")
+
+    service._set_dispatch_state(
+        dispatch.id,
+        state="enqueued",
+        task_id="publisher-task",
+    )
+
+    assert dispatch.state == worker_state
+    assert dispatch.task_id is None
+    assert session.commits == 0
+    assert "FOR UPDATE" in str(session.statement)
+
+
+def test_publish_state_update_still_transitions_pending_locked_row():
+    dispatch = IngestDispatch(
+        id=72,
+        public_id="pending-dispatch-public",
+        item_id=41,
+        request_key="pending-request-key",
+        attempt=1,
+        state="pending",
+    )
+
+    class LockedSession:
+        def __init__(self):
+            self.commits = 0
+
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def scalar(self, _statement): return dispatch
+        def commit(self): self.commits += 1
+
+    session = LockedSession()
+    service = IngestSubmissionService(lambda: session, lambda _dispatch_id: "task")
+
+    service._set_dispatch_state(
+        dispatch.id,
+        state="enqueued",
+        task_id="publisher-task",
+    )
+
+    assert dispatch.state == "enqueued"
+    assert dispatch.task_id == "publisher-task"
+    assert session.commits == 1
 
 
 @pytest.mark.parametrize(

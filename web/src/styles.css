@@ -96,7 +96,9 @@ h2 { line-height: 1.1; }
     0 0 2.8rem 2.9rem rgba(243, 239, 230, 0.58),
     0 0 6.8rem 5.4rem rgba(243, 239, 230, 0.26);
 }
-.login-card .wordmark { margin-bottom: clamp(2.5rem, 7vw, 4rem); }
+.login-card__topline { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: clamp(2.5rem, 7vw, 4rem); }
+.login-companion-link { min-height: 44px; display: inline-flex; flex: 0 0 auto; align-items: center; padding: 0 0.9rem; border: 1px solid var(--line); border-radius: 999px; color: var(--accent-dark); font-size: 0.75rem; font-weight: 850; text-decoration: none; }
+.login-companion-link:hover, .login-companion-link:focus-visible { border-color: rgba(187, 75, 47, 0.48); background: rgba(187, 75, 47, 0.06); }
 .login-card h1 { max-width: 8ch; margin-bottom: 1.15rem; font-size: clamp(2.55rem, 9vw, 4.35rem); }
 
 @keyframes login-halftone-drift {
@@ -658,6 +660,8 @@ h2 { line-height: 1.1; }
   font-weight: 800;
   text-decoration: none;
 }
+.showcase-nav__actions { display: flex; align-items: center; justify-content: flex-end; gap: 0.65rem; }
+.showcase-nav__companion { min-height: 44px; display: inline-flex; align-items: center; padding: 0 0.9rem; border: 1px solid rgba(255, 255, 255, 0.28); color: white; font-family: var(--showcase-mono); font-size: 0.72rem; font-weight: 800; letter-spacing: 0.04em; text-decoration: none; }
 
 .showcase-hero {
   position: relative;
@@ -1394,6 +1398,7 @@ h2 { line-height: 1.1; }
   .showcase-nav { min-height: 68px; }
   .showcase-brand > span:last-child { font-size: 0.62rem; }
   .showcase-nav__cta { font-size: 0.7rem; }
+  .showcase-nav__companion { padding-inline: 0.7rem; font-size: 0.66rem; }
   .showcase-hero { display: block; padding-top: calc(7.75rem + env(safe-area-inset-top)); }
   .showcase-kicker { justify-content: space-between; gap: 0.5rem; margin-bottom: 2.5rem !important; }
   .showcase-kicker span:first-child::before { width: 1.2rem; }

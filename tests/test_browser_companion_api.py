@@ -29,6 +29,10 @@ class Companion:
     def __init__(self):
         self.resolved = []
 
+    def pairing_status(self, pairing_id):
+        assert pairing_id == "a" * 32
+        return "approved"
+
     def resolve_grant(self, token):
         self.resolved.append(token)
         return UserScope(7)
@@ -102,6 +106,40 @@ def test_capture_requires_exact_extension_origin_and_capture_bearer():
     assert accepted.headers["access-control-allow-origin"] == EXTENSION_ORIGIN
     assert companion.resolved == ["capture-token"]
     assert submission.calls[0][0].app_user_id == 7
+
+
+def test_mv3_pairing_status_get_allows_missing_origin_but_mutations_do_not():
+    web, _companion, _submission = client()
+    pairing_id = "a" * 32
+
+    status = web.get(
+        f"/api/v1/browser-companion/extension/pairings/{pairing_id}"
+    )
+    malformed_status = web.get(
+        "/api/v1/browser-companion/extension/pairings/not-a-public-id"
+    )
+    create = web.post(
+        "/api/v1/browser-companion/extension/pairings",
+        json={
+            "challenge": "a" * 43,
+            "client_label": "Chrome / Chromium",
+            "client_version": "0.1.2",
+        },
+    )
+    exchange = web.post(
+        f"/api/v1/browser-companion/extension/pairings/{pairing_id}:exchange",
+        json={"verifier": "a" * 43},
+    )
+
+    assert status.status_code == 200
+    assert status.json() == {"status": "approved"}
+    assert "access-control-allow-origin" not in status.headers
+    assert malformed_status.status_code == 403
+    assert malformed_status.json()["code"] == "extension_origin_invalid"
+    assert create.status_code == 403
+    assert create.json()["code"] == "extension_origin_invalid"
+    assert exchange.status_code == 403
+    assert exchange.json()["code"] == "extension_origin_invalid"
 
 
 def test_web_cookie_cannot_replace_capture_bearer_and_web_approval_keeps_csrf():

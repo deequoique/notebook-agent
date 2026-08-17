@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hmac
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Literal
@@ -34,6 +35,10 @@ from app.web_auth import InvalidSession
 
 
 logger = logging.getLogger(__name__)
+_CHROME_EXTENSION_ORIGIN_RE = re.compile(r"^chrome-extension://[a-p]{32}$")
+_BROWSER_COMPANION_STATUS_PATH_RE = re.compile(
+    r"^/api/v1/browser-companion/extension/pairings/[a-f0-9]{32}$"
+)
 MAX_WEB_REQUEST_BODY_BYTES = 64 * 1024
 _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 _SAFE_HTTP_CODES = frozenset(
@@ -86,6 +91,15 @@ _SAFE_HTTP_CODES = frozenset(
         "queue_unavailable",
     }
 )
+
+
+def _extension_origin_allowed(origin: str, allowed_origins: tuple[str, ...]) -> bool:
+    if origin in allowed_origins:
+        return True
+    return (
+        "chrome-extension://*" in allowed_origins
+        and _CHROME_EXTENSION_ORIGIN_RE.fullmatch(origin) is not None
+    )
 
 
 class HealthResponse(BaseModel):
@@ -318,9 +332,22 @@ def create_app(
                 (),
             )
         )
+        origin_optional_status_read = (
+            request.method == "GET"
+            and not extension_origin
+            and _BROWSER_COMPANION_STATUS_PATH_RE.fullmatch(request.url.path)
+            is not None
+        )
         try:
             if extension_request:
-                if extension_origin not in allowed_extension_origins:
+                if not origin_optional_status_read and not _extension_origin_allowed(
+                    extension_origin, allowed_extension_origins
+                ):
+                    logger.warning(
+                        "browser_companion_origin_rejected request_id=%s origin=%s",
+                        request_id,
+                        extension_origin or "<missing>",
+                    )
                     response = _error_response("extension_origin_invalid", 403)
                 elif request.headers.get("content-encoding", "").lower() not in {
                     "",
@@ -362,7 +389,9 @@ def create_app(
         response.headers["Permissions-Policy"] = (
             "camera=(), microphone=(), geolocation=(), payment=()"
         )
-        if extension_request and extension_origin in allowed_extension_origins:
+        if extension_request and _extension_origin_allowed(
+            extension_origin, allowed_extension_origins
+        ):
             response.headers["Access-Control-Allow-Origin"] = extension_origin
             response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
             response.headers["Access-Control-Allow-Headers"] = (

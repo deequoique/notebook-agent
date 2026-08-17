@@ -39,6 +39,11 @@ describe("login page", () => {
     const wechat = await screen.findByRole("button", { name: "使用微信登录" });
     const telegram = screen.getByRole("button", { name: "使用 Telegram 登录" });
     expect(container.querySelector(".wordmark .brand-logo")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "下载浏览器伴侣" })).toHaveAttribute(
+      "href",
+      "/assets/notebook-agent-browser-companion-local-0.1.3.zip",
+    );
+    expect(screen.getByRole("link", { name: "下载浏览器伴侣" })).toHaveAttribute("download");
     expect(within(wechat).getByTestId("wechat-brand-icon")).toBeInTheDocument();
     expect(within(telegram).getByTestId("telegram-brand-icon")).toBeInTheDocument();
     expect(screen.queryByText("主要方式")).not.toBeInTheDocument();
