@@ -1,0 +1,13 @@
+{"file":".trellis/spec/backend/web-browser-runtime.md","reason":"Preserve same-origin Web cookie/CSRF rules and Web/MCP credential isolation while adding extension pairing."}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Add pairing, grant, and capture models through a single-head forward-compatible Alembic migration."}
+{"file":".trellis/spec/backend/knowledge-item-management.md","reason":"Reuse tenant ownership, restore/retry, deletion race, raw-object cleanup, and retrieval visibility contracts."}
+{"file":".trellis/spec/backend/ingest-completion-queue.md","reason":"Keep terminal capture states and notifications atomic and ensure broker payloads contain IDs rather than transcript bytes."}
+{"file":".trellis/spec/backend/youtube-connector.md","reason":"Preserve existing YouTube selection, rate-limit, content validation, and server-side fallback behavior."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Build accessible presentation states without deriving tenant, lifecycle, or actions in components."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Keep Web session/query ownership intact and prevent extension credentials from leaking into page state."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Own capture and pairing DTOs in Pydantic/OpenAPI and regenerate browser TypeScript contracts."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Apply privacy, CSRF, idempotency, honest async state, accessibility, and frontend verification gates."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Maintain one normalized contract from extension adapters through storage, worker, retrieval, and UI."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Centralize platform registration, transcript parsing, timestamp links, and normalized cue projections."}
+{"file":".trellis/tasks/08-14-browser-companion-video-ingestion/research/repository-integration.md","reason":"Use verified repository auth, quota, ingestion, test, and build constraints during implementation."}
+{"file":".trellis/tasks/08-14-browser-companion-video-ingestion/research/platform-feasibility.md","reason":"Use verified YouTube and NTULearn/Kaltura feasibility, authorization, and privacy boundaries."}

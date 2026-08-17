@@ -432,3 +432,24 @@ Initialized and exported the verified CA bundle before worker-owned YouTube meta
 ### Status
 
 [OK] **Completed**
+
+
+## Session 16: Modularize bounded Agent runtime
+
+**Date**: 2026-08-17
+**Task**: Modularize bounded Agent runtime
+**Branch**: `dev`
+
+### Summary
+
+Split runtime.py into state, builder, tool policy/registrations, answer pipeline, and orchestration modules; removed legacy/default runtime and three feature flags; made save and item management always available; updated specs, docs, evaluator, and tests.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `38e0804` | (see git log) |
+
+### Status
+
+[OK] **Completed**

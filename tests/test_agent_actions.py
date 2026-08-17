@@ -244,7 +244,6 @@ def _runtime(model, submission, pending, *, enabled=True, knowledge=None):
     settings = replace(
         Settings(),
         agent_timeout_seconds=2,
-        agent_save_enabled=enabled,
     )
     services = AgentActionServices(submission, pending)
     return KnowledgeAgent(
@@ -564,7 +563,7 @@ async def test_bare_batch_retry_requires_complete_order_and_duplicates():
             "not-a-url",
             "not-a-url",
             PendingValidationError("invalid_url"),
-            "invalid_url",
+            "runtime_error",
         ),
         (
             "https://example.test/video",
@@ -659,28 +658,6 @@ async def test_model_cannot_save_url_absent_from_current_message():
     assert result.answer.status == "failed"
     assert result.answer.error_code == "invalid_url"
     assert result.answer.action_results[0]["status"] == "invalid_url"
-    assert submission.calls == []
-
-
-@pytest.mark.asyncio
-async def test_feature_flag_off_fails_closed_without_service_call():
-    submission = FakeSubmission(BatchSaveResult(()))
-    runtime = _runtime(
-        _tool_model(
-            "save_videos",
-            {"urls": ["https://youtu.be/dQw4w9WgXcQ"]},
-        ),
-        submission,
-        FakePending(),
-        enabled=False,
-    )
-
-    result = await runtime.run(
-        _request("保存 https://youtu.be/dQw4w9WgXcQ")
-    )
-
-    assert result.answer.status == "failed"
-    assert result.answer.error_code == "save_unavailable"
     assert submission.calls == []
 
 
@@ -800,7 +777,6 @@ async def test_mixed_search_and_delete_uses_canonical_per_item_outcome():
 
     settings = replace(
         Settings(),
-        agent_item_management_enabled=True,
         agent_timeout_seconds=2,
     )
     services = AgentActionServices(

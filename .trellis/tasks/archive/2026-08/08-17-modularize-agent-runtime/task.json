@@ -1,0 +1,29 @@
+{
+  "id": "modularize-agent-runtime",
+  "name": "modularize-agent-runtime",
+  "title": "Modularize Agent runtime",
+  "description": "Modularize app/agent/runtime.py, keep only bounded autonomy, and make save/item-management capabilities always on without environment flags.",
+  "status": "completed",
+  "dev_type": null,
+  "scope": "backend/agent-runtime",
+  "package": null,
+  "priority": "P2",
+  "creator": "lane",
+  "assignee": "lane",
+  "createdAt": "2026-08-17",
+  "completedAt": "2026-08-17",
+  "branch": "codex/modularize-agent-runtime",
+  "base_branch": "dev",
+  "worktree_path": null,
+  "commit": "38e0804",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "dev_type": "backend",
+    "worktree_path": "/Volumes/PeeB/projects/notebook-agent/.runtime/worktrees/modularize-agent-runtime"
+  }
+}

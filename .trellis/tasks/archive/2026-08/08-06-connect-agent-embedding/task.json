@@ -1,0 +1,31 @@
+{
+  "id": "connect-agent-embedding",
+  "name": "connect-agent-embedding",
+  "title": "连接 Agent 层与现有 Embedding 检索层",
+  "description": "将 PydanticAI Agent 的 search_segments 工具与现有 query embedding、pgvector 和 tenant-scoped retrieval 组成一条显式、可验证、失败关闭的生产链路，并统一 CLI 与渠道 gateway 的装配。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "lane",
+  "assignee": "lane",
+  "createdAt": "2026-08-06",
+  "completedAt": "2026-08-16",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "08-06-debug-wechat-double-reply",
+    "08-06-agent-retrieval-live-path",
+    "08-06-openclaw-tls-readiness",
+    "08-07-initial-logging-setup"
+  ],
+  "parent": "08-05-knowledge-retrieval-agent",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

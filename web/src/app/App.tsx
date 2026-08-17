@@ -6,11 +6,13 @@ import {
   Outlet,
   Route,
   Routes,
+  useLocation,
 } from "react-router";
 
 import { getSession, logout, setUnauthorizedHandler } from "../api/client";
 import type { SessionInfo } from "../api/contracts";
 import { AccountLinkPage } from "../account/AccountLinkPage";
+import { BrowserCompanionPage } from "../account/BrowserCompanionPage";
 import { LoginPage } from "../auth/LoginPage";
 import { ChatPage } from "../chat/ChatPage";
 import { LibraryPage } from "../library/LibraryPage";
@@ -27,6 +29,26 @@ type NavigateFn = (
 
 export interface SessionEndOptions {
   accountLinkSuccess?: boolean;
+  returnTo?: string;
+}
+
+const BROWSER_COMPANION_PATH = "/account/browser-companion";
+const PAIRING_SEARCH_RE = /^\?pairing=[a-f0-9]{32}$/;
+
+export function browserCompanionReturnTo(pathname: string, search = ""): string | undefined {
+  if (pathname !== BROWSER_COMPANION_PATH) return undefined;
+  if (!search) return BROWSER_COMPANION_PATH;
+  return PAIRING_SEARCH_RE.test(search) ? `${BROWSER_COMPANION_PATH}${search}` : BROWSER_COMPANION_PATH;
+}
+
+export function loginReturnTo(state: unknown): string {
+  if (typeof state !== "object" || state === null || !("returnTo" in state)) return "/library";
+  const returnTo = (state as { returnTo?: unknown }).returnTo;
+  if (typeof returnTo !== "string") return "/library";
+  const queryIndex = returnTo.indexOf("?");
+  const pathname = queryIndex === -1 ? returnTo : returnTo.slice(0, queryIndex);
+  const search = queryIndex === -1 ? "" : returnTo.slice(queryIndex);
+  return browserCompanionReturnTo(pathname, search) ?? "/library";
 }
 
 export async function logoutAndClear(
@@ -49,6 +71,10 @@ export function endPrivateSession(
   rotateClient();
   if (options.accountLinkSuccess) {
     navigate("/login", { replace: true, state: { accountLinkSuccess: true } });
+    return;
+  }
+  if (options.returnTo) {
+    navigate("/login", { replace: true, state: { returnTo: options.returnTo } });
     return;
   }
   navigate("/login", { replace: true });
@@ -113,11 +139,13 @@ function AccountLinkRoute({ rotateClient }: { rotateClient: () => void }) {
 
 function LoginRoute({ activateSession }: { activateSession: (session: SessionInfo) => void }) {
   const navigate = useRouteNavigate();
+  const location = useLocation();
+  const returnTo = loginReturnTo(location.state);
   return (
     <LoginPage
       onAuthenticated={(session) => {
         activateSession(session);
-        navigate("/library", { replace: true });
+        navigate(returnTo, { replace: true });
       }}
     />
   );
@@ -126,12 +154,15 @@ function LoginRoute({ activateSession }: { activateSession: (session: SessionInf
 function UnauthorizedBoundary({ rotateClient }: { rotateClient: () => void }) {
   const client = useQueryClient();
   const navigate = useRouteNavigate();
+  const location = useLocation();
   useEffect(() => {
     setUnauthorizedHandler(() => {
-      endPrivateSession(client, navigate, rotateClient);
+      endPrivateSession(client, navigate, rotateClient, {
+        returnTo: browserCompanionReturnTo(location.pathname, location.search),
+      });
     });
     return () => setUnauthorizedHandler(null);
-  }, [client, navigate, rotateClient]);
+  }, [client, location.pathname, location.search, navigate, rotateClient]);
   return (
     <Routes>
       <Route path="/" element={<ShowcasePage />} />
@@ -142,6 +173,7 @@ function UnauthorizedBoundary({ rotateClient }: { rotateClient: () => void }) {
         <Route path="/chat" element={<ChatPage />} />
         <Route path="/videos/:id" element={<VideoDetailPage />} />
         <Route path="/account/link" element={<AccountLinkRoute rotateClient={rotateClient} />} />
+        <Route path="/account/browser-companion" element={<BrowserCompanionPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

@@ -31,6 +31,10 @@ describe("application shell", () => {
       "href",
       "/account/link",
     );
+    expect(screen.getByRole("link", { name: "浏览器伴侣" })).toHaveAttribute(
+      "href",
+      "/account/browser-companion",
+    );
     await user.click(screen.getByRole("button", { name: "退出登录" }));
     expect(onLogout).toHaveBeenCalledOnce();
   });

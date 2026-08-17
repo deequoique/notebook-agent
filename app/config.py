@@ -25,7 +25,7 @@ load_dotenv()
 # The answer Composer allows one structured-output repair in a run. Keep this
 # constant next to configuration validation so the provider cap and the
 # post-response safety budget cannot drift apart.
-COMPOSER_VALIDATION_REQUEST_LIMIT = 2
+COMPOSER_VALIDATION_REQUEST_LIMIT = 1
 
 
 def _env(name: str, default: str | None = None) -> str | None:
@@ -65,6 +65,15 @@ def _env_channels(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
     if not channels or unsupported:
         raise ValueError(f"{name} must contain only telegram and/or wechat")
     return channels
+
+
+def _env_csv(name: str, default: tuple[str, ...] = ()) -> tuple[str, ...]:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return tuple(
+        dict.fromkeys(part.strip() for part in value.split(",") if part.strip())
+    )
 
 
 def _require(name: str) -> str:
@@ -274,20 +283,8 @@ class Settings:
     agent_output_token_limit: int = field(
         default_factory=lambda: _env_int("AGENT_OUTPUT_TOKEN_LIMIT", 2000)
     )
-    # Opt-in bounded single-Agent autonomy; rollout remains configuration-only.
-    agent_bounded_autonomy_enabled: bool = field(
-        default_factory=lambda: _env_bool("AGENT_BOUNDED_AUTONOMY_ENABLED", False)
-    )
     agent_composer_max_tokens: int = field(
         default_factory=lambda: _env_int("AGENT_COMPOSER_MAX_TOKENS", 1000)
-    )
-    agent_save_enabled: bool = field(
-        default_factory=lambda: _env_bool("AGENT_SAVE_ENABLED", False)
-    )
-    # Inventory/CRUD rollout is intentionally independent from save actions.
-    # Deleted-content filters remain active even when this flag is disabled.
-    agent_item_management_enabled: bool = field(
-        default_factory=lambda: _env_bool("AGENT_ITEM_MANAGEMENT_ENABLED", False)
     )
     trash_retention_days: int = field(
         default_factory=lambda: _env_int("TRASH_RETENTION_DAYS", 30)
@@ -485,6 +482,24 @@ class Settings:
     web_public_origin: str | None = field(
         default_factory=lambda: _env("WEB_PUBLIC_ORIGIN")
     )
+    browser_companion_allowed_origins: tuple[str, ...] = field(
+        default_factory=lambda: _env_csv("BROWSER_COMPANION_ALLOWED_ORIGINS")
+    )
+    browser_companion_pairing_ttl_seconds: int = field(
+        default_factory=lambda: _env_int(
+            "BROWSER_COMPANION_PAIRING_TTL_SECONDS", 600
+        )
+    )
+    browser_companion_grant_ttl_seconds: int = field(
+        default_factory=lambda: _env_int(
+            "BROWSER_COMPANION_GRANT_TTL_SECONDS", 90 * 24 * 60 * 60
+        )
+    )
+    browser_companion_max_request_bytes: int = field(
+        default_factory=lambda: _env_int(
+            "BROWSER_COMPANION_MAX_REQUEST_BYTES", 5_500_000
+        )
+    )
     web_session_ttl_seconds: int = field(
         default_factory=lambda: _env_int("WEB_SESSION_TTL_SECONDS", 30 * 24 * 60 * 60)
     )
@@ -535,8 +550,6 @@ class Settings:
     def __post_init__(self) -> None:
         if self.notebook_agent_env not in {"development", "production"}:
             raise ValueError("NOTEBOOK_AGENT_ENV must be development or production")
-        if not isinstance(self.agent_bounded_autonomy_enabled, bool):
-            raise ValueError("AGENT_BOUNDED_AUTONOMY_ENABLED must be a boolean")
         if (
             self.notebook_agent_log_retrieval_content
             and self.notebook_agent_env != "development"
@@ -570,6 +583,9 @@ class Settings:
             self.web_auth_email_max_sends,
             self.web_auth_ip_window_seconds,
             self.web_auth_ip_max_sends,
+            self.browser_companion_pairing_ttl_seconds,
+            self.browser_companion_grant_ttl_seconds,
+            self.browser_companion_max_request_bytes,
         )
         if (
             any(value <= 0 for value in positive_web_values)
@@ -577,6 +593,33 @@ class Settings:
             or self.smtp_timeout_seconds <= 0
         ):
             raise ValueError("Web authentication durations and limits must be positive")
+        for extension_origin in self.browser_companion_allowed_origins:
+            if extension_origin == "chrome-extension://*":
+                if (
+                    self.notebook_agent_env != "development"
+                    or self.web_host not in {"127.0.0.1", "localhost", "::1"}
+                ):
+                    raise ValueError(
+                        "wildcard browser companion origins require a loopback-only "
+                        "development Web server"
+                    )
+                continue
+            parsed_extension = urlsplit(extension_origin)
+            extension_id = parsed_extension.netloc
+            if (
+                parsed_extension.scheme != "chrome-extension"
+                or len(extension_id) != 32
+                or any(character not in "abcdefghijklmnop" for character in extension_id)
+                or parsed_extension.path
+                or parsed_extension.query
+                or parsed_extension.fragment
+                or extension_origin.endswith("/")
+            ):
+                raise ValueError(
+                    "BROWSER_COMPANION_ALLOWED_ORIGINS must contain exact "
+                    "chrome-extension origins, or the development-only "
+                    "chrome-extension://* wildcard"
+                )
         if self.web_auth_enabled:
             parsed_origin = urlsplit(self.web_public_origin or "")
             if (

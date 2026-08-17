@@ -2,12 +2,15 @@ import { QueryClient } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { describe, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
 
 import {
   App,
+  browserCompanionReturnTo,
   createPrivateQueryClient,
   createSessionQueryClient,
   endPrivateSession,
+  loginReturnTo,
   logoutAndClear,
 } from "./App";
 
@@ -169,5 +172,79 @@ describe("private cache boundary", () => {
 
     expect(await screen.findByRole("heading", { name: "绑定 Telegram" })).toBeInTheDocument();
     expect(window.location.pathname).toBe("/account/link");
+  });
+
+  it("keeps only a valid browser-companion destination through login", () => {
+    const pairing = "a".repeat(32);
+    expect(browserCompanionReturnTo(
+      "/account/browser-companion",
+      `?pairing=${pairing}`,
+    )).toBe(`/account/browser-companion?pairing=${pairing}`);
+    expect(browserCompanionReturnTo(
+      "/account/browser-companion",
+      "?pairing=invalid&next=https://example.com",
+    )).toBe("/account/browser-companion");
+    expect(loginReturnTo({ returnTo: "https://example.com" })).toBe("/library");
+    expect(loginReturnTo({ returnTo: `/account/browser-companion?pairing=${pairing}` }))
+      .toBe(`/account/browser-companion?pairing=${pairing}`);
+  });
+
+  it("returns an email login to the pending browser-companion approval", async () => {
+    const pairing = "b".repeat(32);
+    window.history.replaceState({}, "", `/account/browser-companion?pairing=${pairing}`);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const path = String(input);
+      if (path === "/api/v1/auth/session") {
+        return new Response(JSON.stringify({ code: "session_invalid", message: "登录已失效" }), {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (path === "/api/v1/capabilities") {
+        return new Response(JSON.stringify({
+          supported_platforms: ["youtube", "ntu_kaltura"],
+          browser_companion: true,
+          web_login_channels: ["email"],
+          save_enabled: true,
+          max_save_batch_size: 10,
+          transcript_pagination: true,
+          archive: true,
+          summary_generation: false,
+          chat: false,
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (path === "/api/v1/auth/challenges" && init?.method === "POST") {
+        return new Response(JSON.stringify({ status: "accepted" }), {
+          status: 202,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (path === "/api/v1/auth/verify" && init?.method === "POST") {
+        return new Response(JSON.stringify({
+          authenticated: true,
+          login_channel: "email",
+          expires_at: "2026-09-14T12:00:00Z",
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (path === "/api/v1/browser-companion/devices") {
+        return new Response(JSON.stringify({ devices: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    render(createElement(App));
+    const user = userEvent.setup();
+    await user.type(await screen.findByRole("textbox", { name: "邮箱地址" }), "local-user@example.test");
+    await user.click(screen.getByRole("button", { name: "获取验证码" }));
+    await user.type(await screen.findByRole("textbox", { name: "6 位验证码" }), "123456");
+    await user.click(screen.getByRole("button", { name: "确认登录" }));
+
+    expect(await screen.findByRole("heading", { name: "连接这个插件" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "允许连接" })).toBeEnabled();
+    expect(window.location.pathname).toBe("/account/browser-companion");
+    expect(window.location.search).toBe(`?pairing=${pairing}`);
   });
 });

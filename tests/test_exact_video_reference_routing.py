@@ -218,7 +218,7 @@ async def test_bare_supported_url_is_history_independent_and_never_calls_model()
 
     runtime = KnowledgeAgent(
         FunctionModel(forbidden_model),
-        replace(Settings(), agent_save_enabled=True, agent_timeout_seconds=2),
+        replace(Settings(), agent_timeout_seconds=2),
         lambda _request: pytest.fail("bare URL must not construct retrieval services"),
         action_factory=lambda _request: actions,
     )
@@ -246,7 +246,7 @@ async def test_bare_unsupported_url_retains_safe_validation_without_model():
 
     runtime = KnowledgeAgent(
         FunctionModel(forbidden_model),
-        replace(Settings(), agent_save_enabled=True, agent_timeout_seconds=2),
+        replace(Settings(), agent_timeout_seconds=2),
         lambda _request: pytest.fail("URL-only validation must not construct retrieval services"),
         action_factory=lambda _request: actions,
     )
@@ -346,7 +346,7 @@ async def test_history_cannot_turn_explicit_content_question_into_save_action():
     )
     runtime = KnowledgeAgent(
         FunctionModel(planner),
-        replace(Settings(), agent_save_enabled=True, agent_timeout_seconds=2),
+        replace(Settings(), agent_timeout_seconds=2),
         lambda _request: services,
         action_factory=lambda _request: actions,
         composer_model=composer,
@@ -536,7 +536,6 @@ async def test_management_tools_are_hidden_for_explicit_url_questions():
         FunctionModel(planner),
         replace(
             Settings(),
-            agent_item_management_enabled=True,
             agent_timeout_seconds=2,
         ),
         lambda _request: _Services(),

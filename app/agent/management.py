@@ -76,7 +76,7 @@ class SavedItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     item_id: int
-    platform: Literal["youtube", "bilibili", "wechat_mp"]
+    platform: Literal["youtube", "bilibili", "wechat_mp", "ntu_kaltura"]
     kind: Literal["video", "article"]
     title: str
     author: str | None = None
@@ -549,7 +549,9 @@ class KnowledgeItemManagementService:
             raise ManagementError("invalid_location")
         if kind is not None and kind not in {"video", "article"}:
             raise ManagementError("invalid_filter")
-        if platform is not None and platform not in {"youtube", "bilibili", "wechat_mp"}:
+        if platform is not None and platform not in {
+            "youtube", "bilibili", "wechat_mp", "ntu_kaltura"
+        }:
             raise ManagementError("invalid_filter")
         if state is not None and state not in {
             "pending", "fetching", "needs_extension", "needs_asr", "chunking",

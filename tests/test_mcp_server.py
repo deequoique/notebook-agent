@@ -433,8 +433,6 @@ async def test_mcp_natural_question_reaches_real_channel_and_knowledge_agent():
         settings = replace(
             Settings(),
             agent_timeout_seconds=2,
-            agent_save_enabled=False,
-            agent_item_management_enabled=False,
         )
         agent = KnowledgeAgent(
             FunctionModel(planner),

@@ -231,12 +231,12 @@ def test_settings_validate_composer_provider_budget(monkeypatch):
     with pytest.raises(ValueError, match="AGENT_COMPOSER_MAX_TOKENS must be positive"):
         Settings()
 
-    monkeypatch.setenv("AGENT_COMPOSER_MAX_TOKENS", "1001")
+    monkeypatch.setenv("AGENT_COMPOSER_MAX_TOKENS", "2001")
     with pytest.raises(ValueError, match="must not exceed AGENT_OUTPUT_TOKEN_LIMIT"):
         Settings()
 
-    monkeypatch.setenv("AGENT_COMPOSER_MAX_TOKENS", "1000")
-    assert Settings().agent_composer_max_tokens == 1000
+    monkeypatch.setenv("AGENT_COMPOSER_MAX_TOKENS", "2000")
+    assert Settings().agent_composer_max_tokens == 2000
 
 
 def test_context_compressed_diagnostic_contains_only_safe_counts(caplog):

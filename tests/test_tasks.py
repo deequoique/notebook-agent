@@ -32,7 +32,7 @@ from app.ingest.tasks import (
     publish_ingest_dispatch,
     run_isolated_batch,
 )
-from app.models import AppUser, ContentItem, IngestDispatch
+from app.models import AppUser, BrowserCapture, ContentItem, IngestDispatch, Segment
 from app.tls import TLSConfigurationError, TrustedCA
 
 
@@ -281,6 +281,401 @@ def test_worker_fetches_and_persists_metadata_before_text():
     assert item.duration_sec == 42
     assert item.tags == ["worker"]
     assert item.state == "needs_asr"
+
+
+def test_browser_capture_without_captions_goes_to_needs_asr_without_remote_fetch(monkeypatch):
+    item = type("Item", (), {"id": 41, "user_id": 7, "state": "pending", "text_source": "none"})()
+    capture = type("Capture", (), {"caption_status": "unavailable"})()
+    statements = []
+
+    class DB:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def get(self, _model, _item_id): return item
+        def scalar(self, statement):
+            statements.append(str(statement))
+            return capture
+        def commit(self): return None
+
+    monkeypatch.setattr("app.ingest.tasks._connector", lambda _url: pytest.fail("capture path must not use the remote connector"))
+    state = process_item(item.id, session_factory=lambda: DB())
+
+    assert state == "needs_asr"
+    assert item.text_source == "none"
+    assert "browser_capture.app_user_id" in statements[0]
+
+
+def test_browser_capture_ready_from_original_attempt_is_reused_on_retry(monkeypatch):
+    item = type(
+        "Item",
+        (),
+        {
+            "id": 41,
+            "user_id": 7,
+            "platform": "ntu_kaltura",
+            "platform_id": "123456_retry",
+            "url": "https://ntulearnvideo.ntu.edu.sg/media/123456_retry",
+            "chapters": [],
+            "state": "pending",
+            "raw_object_key": None,
+            "raw_format": "json3",
+            "content_hash": None,
+            "text_source": "none",
+            "lang": None,
+            "fail_reason": None,
+            "deleted_at": None,
+            "purge_claimed_at": None,
+        },
+    )()
+    capture = type(
+        "Capture",
+        (),
+        {
+            "app_user_id": 7,
+            "caption_status": "available",
+            "caption_source": "official_cc",
+            "language": "en",
+            "raw_object_key": "7/ntu_kaltura/123456_retry/retry.capture.json",
+        },
+    )()
+    dispatch_states = iter(("running", "failed"))
+    statements = []
+
+    class DB:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def get(self, model, _item_id):
+            assert model is ContentItem
+            return item
+        def scalar(self, statement):
+            sql = str(statement)
+            statements.append(sql)
+            dispatch_state = next(dispatch_states)
+            # A ready capture remains reusable after the dispatch that staged
+            # it has failed. The pre-fix query incorrectly required that
+            # dispatch to remain running.
+            if "ingest_dispatch.state" in sql and dispatch_state != "running":
+                return None
+            return capture
+        def commit(self): return None
+        def refresh(self, _value): return None
+        def execute(self, _statement): return None
+        def add(self, _value): return None
+
+    body = json.dumps(
+        {
+            "schema_version": "capture-transcript.v1",
+            "cues": [{"start_sec": 0, "end_sec": 2, "text": "retry text"}],
+        }
+    ).encode()
+
+    class Store:
+        def __init__(self): self.gets = []
+        def get(self, key, *, max_bytes):
+            self.gets.append((key, max_bytes))
+            return body
+        def put(self, *_args): pytest.fail("captured object must not be uploaded twice")
+
+    class Embedder:
+        def embed(self, values): return [[1.0, 0.0] for _ in values]
+
+    monkeypatch.setattr("app.ingest.tasks._connector", lambda _url: pytest.fail("retry must reuse the ready browser capture"))
+    store = Store()
+    assert process_item(item.id, embedder=Embedder(), object_store=store, session_factory=lambda: DB()) == "ready"
+    item.state = "pending"
+    assert process_item(item.id, embedder=Embedder(), object_store=store, session_factory=lambda: DB()) == "ready"
+    assert len(store.gets) == 2
+    assert all("browser_capture.app_user_id" in sql for sql in statements)
+    assert all("ingest_dispatch.state" not in sql for sql in statements)
+    assert all("browser_capture.created_at DESC" in sql and "browser_capture.id DESC" in sql for sql in statements)
+
+
+def test_browser_capture_retry_does_not_reuse_a_different_users_capture(monkeypatch):
+    item = type(
+        "Item",
+        (),
+        {
+            "id": 41,
+            "user_id": 7,
+            "platform": "ntu_kaltura",
+            "platform_id": "123456_retry",
+            "url": "https://ntulearnvideo.ntu.edu.sg/media/123456_retry",
+            "chapters": [],
+            "state": "pending",
+        },
+    )()
+    foreign_capture = type(
+        "Capture",
+        (),
+        {
+            "app_user_id": 99,
+            "caption_status": "available",
+            "caption_source": "official_cc",
+            "language": "en",
+            "raw_object_key": "99/ntu_kaltura/123456_retry/foreign.capture.json",
+        },
+    )()
+
+    class DB:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def get(self, model, _item_id):
+            assert model is ContentItem
+            return item
+        def scalar(self, statement):
+            sql = str(statement)
+            # Simulate a bad/cross-tenant row that would be selected by the
+            # old item-only lookup, but must be excluded by app_user_id.
+            return foreign_capture if "browser_capture.app_user_id" not in sql else None
+        def commit(self): return None
+
+    class Connector:
+        def __init__(self): self.calls = []
+        def fetch_meta(self, platform_id):
+            self.calls.append(("meta", platform_id))
+            return None
+        def fetch_text(self, platform_id):
+            self.calls.append(("text", platform_id))
+            return NeedsASR()
+
+    connector = Connector()
+    monkeypatch.setattr("app.ingest.tasks._connector", lambda _url: connector)
+    assert process_item(item.id, session_factory=lambda: DB()) == "needs_asr"
+    assert connector.calls == [("meta", item.platform_id), ("text", item.platform_id)]
+
+
+def test_browser_capture_with_captions_reuses_object_and_existing_worker(monkeypatch):
+    item = type(
+        "Item",
+        (),
+        {
+            "id": 41,
+            "user_id": 7,
+            "platform": "ntu_kaltura",
+            "platform_id": "123456_abCd",
+            "url": "https://ntulearnvideo.ntu.edu.sg/media/123456_abCd",
+            "chapters": [],
+            "state": "pending",
+            "raw_object_key": None,
+            "raw_format": "json3",
+            "content_hash": None,
+            "text_source": "none",
+            "lang": None,
+            "fail_reason": None,
+            "deleted_at": None,
+            "purge_claimed_at": None,
+        },
+    )()
+    capture = type(
+        "Capture",
+        (),
+        {
+            "caption_status": "available",
+            "caption_source": "official_cc",
+            "language": "en",
+            "raw_object_key": "7/ntu_kaltura/123456_abCd/hash.capture.json",
+        },
+    )()
+    added = []
+
+    class DB:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def get(self, model, _item_id):
+            assert model is ContentItem
+            return item
+        def scalar(self, _statement): return capture
+        def commit(self): return None
+        def refresh(self, _value): return None
+        def execute(self, _statement): return None
+        def add(self, value): added.append(value)
+
+    body = json.dumps(
+        {
+            "schema_version": "capture-transcript.v1",
+            "cues": [{"start_sec": 0, "end_sec": 2, "text": "lecture text"}],
+        }
+    ).encode()
+
+    class Store:
+        def __init__(self): self.gets = []
+        def get(self, key, *, max_bytes):
+            self.gets.append((key, max_bytes))
+            return body
+        def put(self, *_args): pytest.fail("captured object must not be uploaded twice")
+
+    class Embedder:
+        def embed(self, values): return [[1.0, 0.0] for _ in values]
+
+    store = Store()
+    monkeypatch.setattr("app.ingest.tasks._connector", lambda _url: pytest.fail("captured content must not call a remote connector"))
+    state = process_item(
+        item.id,
+        embedder=Embedder(),
+        object_store=store,
+        session_factory=lambda: DB(),
+    )
+
+    assert state == "ready"
+    assert item.raw_object_key == capture.raw_object_key
+    assert item.raw_format == "capture_v1"
+    assert item.text_source == "official_cc"
+    assert any(isinstance(value, Segment) for value in added)
+    assert len(store.gets) == 1
+
+
+def test_long_browser_capture_skips_per_cue_semantic_embedding(monkeypatch):
+    item = type(
+        "Item",
+        (),
+        {
+            "id": 42,
+            "user_id": 7,
+            "platform": "ntu_kaltura",
+            "platform_id": "123456_long",
+            "url": "https://ntulearnvideo.ntu.edu.sg/media/123456_long",
+            "chapters": [],
+            "state": "pending",
+            "raw_object_key": None,
+            "raw_format": "json3",
+            "content_hash": None,
+            "text_source": "none",
+            "lang": None,
+            "fail_reason": None,
+            "deleted_at": None,
+            "purge_claimed_at": None,
+        },
+    )()
+    capture = type(
+        "Capture",
+        (),
+        {
+            "caption_status": "available",
+            "caption_source": "official_cc",
+            "language": "en",
+            "raw_object_key": "7/ntu_kaltura/123456_long/hash.capture.json",
+        },
+    )()
+
+    class DB:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def get(self, model, _item_id):
+            assert model is ContentItem
+            return item
+        def scalar(self, _statement): return capture
+        def commit(self): return None
+        def refresh(self, _value): return None
+        def execute(self, _statement): return None
+        def add(self, _value): return None
+
+    cue_count = 513
+    body = json.dumps(
+        {
+            "schema_version": "capture-transcript.v1",
+            "cues": [
+                {"start_sec": index, "end_sec": index + 0.8, "text": f"cue {index}"}
+                for index in range(cue_count)
+            ],
+        }
+    ).encode()
+
+    class Store:
+        def get(self, _key, *, max_bytes):
+            assert max_bytes > len(body)
+            return body
+        def put(self, *_args): pytest.fail("captured object must not be uploaded twice")
+
+    class Embedder:
+        def __init__(self): self.calls = []
+        def embed(self, values):
+            self.calls.append(list(values))
+            return [[1.0, 0.0] for _ in values]
+
+    embedder = Embedder()
+    state = process_item(
+        item.id,
+        embedder=embedder,
+        object_store=Store(),
+        session_factory=lambda: DB(),
+    )
+
+    assert state == "ready"
+    assert len(embedder.calls) == 1
+    assert 0 < len(embedder.calls[0]) < cue_count
+
+
+def test_long_connector_transcript_keeps_per_cue_semantic_embedding():
+    cue_count = 513
+    item = type(
+        "Item",
+        (),
+        {
+            "id": 43,
+            "user_id": 7,
+            "platform": "youtube",
+            "platform_id": "dQw4w9WgXcQ",
+            "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "chapters": [],
+            "state": "pending",
+            "raw_object_key": None,
+            "raw_format": "json3",
+            "content_hash": None,
+            "text_source": "none",
+            "lang": None,
+            "fail_reason": None,
+            "deleted_at": None,
+            "purge_claimed_at": None,
+        },
+    )()
+
+    class DB:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def get(self, model, _item_id):
+            assert model is ContentItem
+            return item
+        def commit(self): return None
+        def refresh(self, _value): return None
+        def execute(self, _statement): return None
+        def add(self, _value): return None
+
+    cues = [Cue(index, index + 0.8, "word") for index in range(cue_count)]
+
+    class Connector:
+        platform = "youtube"
+
+        def fetch_meta(self, _platform_id):
+            return None
+
+        def fetch_text(self, _platform_id):
+            return TextResult(b"connector transcript", cues, "official_cc", "en")
+
+    class Store:
+        def put(self, *_args): return None
+
+    class Embedder:
+        def __init__(self): self.calls = []
+        def embed(self, values):
+            self.calls.append(list(values))
+            return [[1.0, 0.0] for _ in values]
+
+    embedder = Embedder()
+    state = process_item(
+        item.id,
+        connector=Connector(),
+        embedder=embedder,
+        object_store=Store(),
+        session_factory=lambda: DB(),
+    )
+
+    assert state == "ready"
+    # Ordinary connector ingestion retains semantic-boundary quality even
+    # when a transcript happens to exceed the browser-capture optimization
+    # threshold: one per-cue call followed by final chunk vectors.
+    assert len(embedder.calls) == 2
+    assert len(embedder.calls[0]) == cue_count
+    assert 0 < len(embedder.calls[1]) < cue_count
 
 
 @pytest.mark.parametrize(

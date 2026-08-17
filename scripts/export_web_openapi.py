@@ -30,6 +30,8 @@ def rendered_schema() -> str:
             submission=placeholder,
             transcript=placeholder,
             email_auth=placeholder,
+            browser_companion=placeholder,
+            browser_capture_submission=placeholder,
         ),
         expected_origin="https://contract.invalid",
         cookie_secure=True,

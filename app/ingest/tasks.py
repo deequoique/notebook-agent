@@ -20,6 +20,7 @@ from kombu import Producer, Queue
 from sqlalchemy import and_, delete, func, inspect, or_, select, text
 
 from app.config import Settings, get_settings
+from app.browser_capture import parse_canonical_transcript
 from app.connectors.base import NeedsASR, NeedsExtension, TextResult, TransientFetchError
 from app.connectors.youtube import YouTubeConnector
 from app.db import get_session_factory
@@ -28,6 +29,7 @@ from app.ingest.embed import EmbeddingProvider, ZhipuEmbedder
 from app.ingest.validate import IngestLimitExceeded, guard_ingest_limits, guard_transcript
 from app.models import (
     AppUser,
+    BrowserCapture,
     ContentItem,
     IngestCompletionEvent,
     IngestDispatch,
@@ -38,6 +40,14 @@ from app.agent.management import RecycleBinPurgeService
 from app.object_store import RawObjectStore
 from app.ingest.notifications import IngestNotificationPoller
 from app.tls import configure_trusted_ca
+
+
+# Per-cue semantic boundaries are useful for short/medium transcripts, but a
+# multi-hour recording can contain thousands of tiny cues. Embedding every cue
+# before embedding the final chunks multiplies provider calls without changing
+# the hard 120-second safety boundary. Long tracks use deterministic hard cuts
+# and reserve provider work for the final searchable chunks.
+MAX_SEMANTIC_BOUNDARY_CUES = 512
 
 
 COMPLETION_QUEUE = "ingest-completion"
@@ -245,26 +255,72 @@ def process_item(item_id: int, *, connector: Any | None = None, embedder: Embedd
         if item is None:
             raise LookupError(f"content item {item_id} not found")
         if getattr(item, "deleted_at", None) is not None or getattr(item, "purge_claimed_at", None) is not None:
-            # A late worker may finish remote fetching, but must not publish
-            # new visible segments for an item that is in the recycle bin.
             _mark_item_deleted(db, item)
             return "deleted"
-        connector = connector or _connector(item.url)
-        meta = connector.fetch_meta(item.platform_id)
-        if meta is not None:
-            item.url = meta.url
-            item.title = meta.title
-            item.author = meta.author
-            item.published_at = meta.published_at
-            item.duration_sec = meta.duration_sec
-            item.lang = meta.lang
-            item.description = meta.description
-            item.tags = meta.tags
-            item.chapters = meta.chapters
-            item.cover_url = meta.cover_url
-        item.state = "fetching"
-        db.commit()
-        result = connector.fetch_text(item.platform_id)
+
+        settings = get_settings()
+        store = object_store
+        capture = None
+        item_user_id = getattr(item, "user_id", None)
+        if connector is None and item_user_id is not None:
+            capture = db.scalar(
+                select(BrowserCapture)
+                .where(
+                    BrowserCapture.item_id == item.id,
+                    BrowserCapture.app_user_id == item_user_id,
+                    BrowserCapture.state == "ready",
+                )
+                .order_by(
+                    BrowserCapture.created_at.desc(),
+                    BrowserCapture.id.desc(),
+                )
+                .limit(1)
+            )
+        pre_stored = capture is not None
+        if capture is not None:
+            item.state = "fetching"
+            db.commit()
+            if capture.caption_status == "unavailable":
+                item.state = "needs_asr"
+                item.text_source = "none"
+                db.commit()
+                return item.state
+            if (
+                not capture.raw_object_key
+                or capture.caption_source not in {"official_cc", "auto_caption"}
+                or not capture.language
+            ):
+                raise ValueError("captured_transcript_invalid")
+            if store is None:
+                store = RawObjectStore()
+            body = store.get(
+                capture.raw_object_key,
+                max_bytes=settings.ingest_max_raw_transcript_bytes,
+            )
+            result = parse_canonical_transcript(
+                body,
+                source=capture.caption_source,
+                language=capture.language,
+            )
+            key = capture.raw_object_key
+        else:
+            connector = connector or _connector(item.url)
+            meta = connector.fetch_meta(item.platform_id)
+            if meta is not None:
+                item.url = meta.url
+                item.title = meta.title
+                item.author = meta.author
+                item.published_at = meta.published_at
+                item.duration_sec = meta.duration_sec
+                item.lang = meta.lang
+                item.description = meta.description
+                item.tags = meta.tags
+                item.chapters = meta.chapters
+                item.cover_url = meta.cover_url
+            item.state = "fetching"
+            db.commit()
+            result = connector.fetch_text(item.platform_id)
+
         if isinstance(result, NeedsExtension):
             item.state = "needs_extension"
             db.commit()
@@ -276,7 +332,6 @@ def process_item(item_id: int, *, connector: Any | None = None, embedder: Embedd
         if not isinstance(result, TextResult):
             raise TypeError(f"connector returned unsupported text result: {type(result)!r}")
         guard_transcript(result.raw_body, result.cues, platform=item.platform)
-        settings = get_settings()
         guard_ingest_limits(
             result.raw_body,
             result.cues,
@@ -291,27 +346,23 @@ def process_item(item_id: int, *, connector: Any | None = None, embedder: Embedd
         )
         if len(preflight_chunks) > settings.ingest_max_segments_per_item:
             raise IngestLimitExceeded()
-        key = f"{item.user_id}/{item.platform}/{item.platform_id}/{hashlib.sha256(result.raw_body).hexdigest()}.json3"
+        if not pre_stored:
+            key = f"{item.user_id}/{item.platform}/{item.platform_id}/{hashlib.sha256(result.raw_body).hexdigest()}.json3"
         db.refresh(item)
         if getattr(item, "deleted_at", None) is not None or getattr(item, "purge_claimed_at", None) is not None:
             _mark_item_deleted(db, item)
             return "deleted"
-        store = object_store or RawObjectStore()
-        # Persist a deterministic cleanup intent before crossing the external
-        # object-store boundary.  If the process dies during/after ``put``,
-        # purge and a later worker both have the key needed for idempotent
-        # cleanup; no uncommitted ORM attribute can hide an orphan object.
         item.raw_object_key = key
+        item.raw_format = result.format
         item.content_hash = hashlib.sha256("\n".join(c.text.strip() for c in result.cues).encode()).hexdigest()
         item.text_source = result.source
         item.lang = result.lang
         item.state = "chunking"
         db.commit()
-        store.put(key, result.raw_body, "application/json")
-        # A soft delete may have committed while the object was being put.
-        # Remove the object immediately and leave the row/dispatch available
-        # for restore or retry; the final check below protects the embedding
-        # interleaving as well.
+        if store is None:
+            store = RawObjectStore()
+        if not pre_stored:
+            store.put(key, result.raw_body, "application/json")
         db.refresh(item)
         if getattr(item, "deleted_at", None) is not None or getattr(item, "purge_claimed_at", None) is not None:
             _delete_object_best_effort(store, key)
@@ -329,7 +380,16 @@ def process_item(item_id: int, *, connector: Any | None = None, embedder: Embedd
             remaining_embedding_chars -= requested
             return embedder.embed(texts)
 
-        chunks = chunk(result.cues, lang=result.lang, chapters=item.chapters, semantic_embedder=semantic)
+        chunks = chunk(
+            result.cues,
+            lang=result.lang,
+            chapters=item.chapters,
+            semantic_embedder=(
+                semantic
+                if not pre_stored or len(result.cues) <= MAX_SEMANTIC_BOUNDARY_CUES
+                else None
+            ),
+        )
         if len(chunks) > settings.ingest_max_segments_per_item:
             raise IngestLimitExceeded()
         vectors = semantic([part.text for part in chunks])

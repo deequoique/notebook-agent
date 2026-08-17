@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend review entry point and quality checklist."}
+{"file":".trellis/spec/backend/agent-retrieval-convergence.md","reason":"Verify the refactor preserves both Agent modes, budgets, citations, fallback, and persistence."}
+{"file":".trellis/spec/backend/knowledge-item-management.md","reason":"Verify tool schemas, tenant boundaries, confirmations, and terminal action behavior remain unchanged."}
+{"file":".trellis/spec/backend/provider-tls-diagnostics.md","reason":"Verify diagnostic phase semantics and production redaction remain unchanged."}
+{"file":".trellis/spec/backend/web-browser-runtime.md","reason":"Verify always-on Web save composition remains in the canonical runtime owner."}
+{"file":".trellis/tasks/08-17-modularize-agent-runtime/research/current-runtime-map.md","reason":"Verify compatibility exports and the intended regression surface."}
+{"file":".trellis/tasks/08-17-modularize-agent-runtime/research/flag-removal-impact.md","reason":"Verify all removed-flag consumers and documentation are handled without weakening security gates."}

@@ -172,6 +172,7 @@ export function AddVideosDialog({
             <small className="url-count" data-over-limit={urls.length > 10}>{urls.length} / 10</small>
           </span>
           <p className="field-help" id="url-draft-help">粘贴链接后按 Enter；也可以一次粘贴多行。</p>
+          <p className="field-help">NTULearn 视频，或服务器暂时无法读取的 YouTube 视频，请先打开原视频，再使用 <a href="/account/browser-companion">浏览器伴侣</a>。</p>
           <div className="url-token-input">
             {urls.length > 0 ? (
               <ol className="url-tag-list" aria-label="已添加的 YouTube 链接">

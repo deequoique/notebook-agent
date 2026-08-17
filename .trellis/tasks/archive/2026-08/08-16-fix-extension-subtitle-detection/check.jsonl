@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/browser-companion-capture.md", "reason": "Review capture privacy, compatibility, and mandatory extension gates"}
+{"file": ".trellis/tasks/08-16-fix-extension-subtitle-detection/research/local-code-audit.md", "reason": "Verify implementation addresses every observed gap without overwriting existing work"}

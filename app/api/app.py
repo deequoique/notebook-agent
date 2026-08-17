@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hmac
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Literal
@@ -11,13 +12,14 @@ from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.api.auth_routes import build_auth_router
+from app.api.browser_companion_routes import build_browser_companion_router
 from app.api.conversation_routes import build_conversation_router
 from app.api.email_auth_routes import build_email_auth_router
 from app.api.library_routes import build_library_router
@@ -33,6 +35,10 @@ from app.web_auth import InvalidSession
 
 
 logger = logging.getLogger(__name__)
+_CHROME_EXTENSION_ORIGIN_RE = re.compile(r"^chrome-extension://[a-p]{32}$")
+_BROWSER_COMPANION_STATUS_PATH_RE = re.compile(
+    r"^/api/v1/browser-companion/extension/pairings/[a-f0-9]{32}$"
+)
 MAX_WEB_REQUEST_BODY_BYTES = 64 * 1024
 _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 _SAFE_HTTP_CODES = frozenset(
@@ -64,8 +70,36 @@ _SAFE_HTTP_CODES = frozenset(
         "link_source_unbound",
         "link_merge_conflict",
         "link_token_invalid",
+        "extension_origin_invalid",
+        "extension_pairing_invalid",
+        "extension_pairing_pending",
+        "extension_pairing_expired",
+        "extension_pairing_used",
+        "extension_pairing_rate_limited",
+        "extension_pairing_required",
+        "extension_grant_expired",
+        "extension_grant_revoked",
+        "extension_account_disabled",
+        "extension_scope_invalid",
+        "extension_device_not_found",
+        "capture_payload_invalid",
+        "capture_content_hash_mismatch",
+        "capture_protocol_unsupported",
+        "capture_conflict",
+        "capture_too_large",
+        "capture_upload_failed",
+        "queue_unavailable",
     }
 )
+
+
+def _extension_origin_allowed(origin: str, allowed_origins: tuple[str, ...]) -> bool:
+    if origin in allowed_origins:
+        return True
+    return (
+        "chrome-extension://*" in allowed_origins
+        and _CHROME_EXTENSION_ORIGIN_RE.fullmatch(origin) is not None
+    )
 
 
 class HealthResponse(BaseModel):
@@ -77,7 +111,11 @@ class HealthResponse(BaseModel):
 class CapabilitiesResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    supported_platforms: tuple[Literal["youtube"], ...] = ("youtube",)
+    supported_platforms: tuple[Literal["youtube", "ntu_kaltura"], ...] = (
+        "youtube",
+        "ntu_kaltura",
+    )
+    browser_companion: bool = True
     web_login_channels: tuple[Literal["email", "telegram", "wechat"], ...] = (
         "telegram",
         "wechat",
@@ -98,6 +136,8 @@ class WebApiServices:
     library: Any
     submission: Any
     transcript: Any
+    browser_companion: Any | None = None
+    browser_capture_submission: Any | None = None
     email_auth: Any | None = None
     trusted_proxy_hosts: str = ""
     # Retained conversation/link routes are mounted by this canonical app.
@@ -143,15 +183,37 @@ _SAFE_MESSAGES = {
     "link_source_unbound": "请先在当前来源渠道完成注册",
     "link_merge_conflict": "账户状态发生变化，请稍后重试",
     "link_token_invalid": "绑定码无效，请重新生成",
+    "extension_origin_invalid": "浏览器伴侣来源无效",
+    "extension_pairing_invalid": "浏览器伴侣配对请求无效",
+    "extension_pairing_pending": "请先在 Notebook Agent 中批准配对",
+    "extension_pairing_expired": "浏览器伴侣配对已过期，请重新开始",
+    "extension_pairing_used": "浏览器伴侣配对已使用，请重新开始",
+    "extension_pairing_rate_limited": "配对请求过多，请稍后重试",
+    "extension_pairing_required": "请先连接浏览器伴侣",
+    "extension_grant_expired": "浏览器伴侣连接已过期，请重新连接",
+    "extension_grant_revoked": "浏览器伴侣连接已断开，请重新连接",
+    "extension_account_disabled": "账户不可用",
+    "extension_scope_invalid": "浏览器伴侣权限无效",
+    "extension_device_not_found": "未找到该浏览器伴侣",
+    "capture_payload_invalid": "字幕数据无效",
+    "capture_content_hash_mismatch": "字幕数据校验失败",
+    "capture_protocol_unsupported": "浏览器伴侣版本不兼容，请升级",
+    "capture_conflict": "该视频当前已有保存任务，请稍后重试",
+    "capture_too_large": "字幕数据超过当前处理上限",
+    "capture_upload_failed": "字幕上传失败，请稍后重试",
+    "queue_unavailable": "保存任务暂时无法排队，请稍后重试",
 }
 
 
 class RequestBodyLimitMiddleware:
     """Bound both fixed-length and chunked request bodies before parsing."""
 
-    def __init__(self, app: ASGIApp, *, max_bytes: int) -> None:
+    def __init__(
+        self, app: ASGIApp, *, max_bytes: int, capture_max_bytes: int
+    ) -> None:
         self.app = app
         self.max_bytes = max_bytes
+        self.capture_max_bytes = capture_max_bytes
 
     async def __call__(
         self,
@@ -163,12 +225,18 @@ class RequestBodyLimitMiddleware:
             await self.app(scope, receive, send)
             return
         headers = dict(scope.get("headers", ()))
+        path = str(scope.get("path", ""))
+        max_bytes = (
+            self.capture_max_bytes
+            if path == "/api/v1/browser-companion/extension/captures"
+            else self.max_bytes
+        )
         raw_length = headers.get(b"content-length", b"")
         try:
             declared_length = int(raw_length) if raw_length else None
         except ValueError:
             declared_length = None
-        if declared_length is not None and declared_length > self.max_bytes:
+        if declared_length is not None and declared_length > max_bytes:
             await _error_response("request_too_large", 413)(scope, receive, send)
             return
 
@@ -181,7 +249,7 @@ class RequestBodyLimitMiddleware:
                 return
             chunk = message.get("body", b"")
             received += len(chunk)
-            if received > self.max_bytes:
+            if received > max_bytes:
                 await _error_response("request_too_large", 413)(scope, receive, send)
                 return
             chunks.append(chunk)
@@ -241,14 +309,56 @@ def create_app(
     app.add_middleware(
         RequestBodyLimitMiddleware,
         max_bytes=MAX_WEB_REQUEST_BODY_BYTES,
+        capture_max_bytes=int(
+            getattr(
+                getattr(services, "settings", None),
+                "browser_companion_max_request_bytes",
+                5_500_000,
+            )
+        ),
     )
 
     @app.middleware("http")
     async def secure_web_boundary(request: Request, call_next):
         request_id = uuid4().hex
         request.state.request_id = request_id
+        extension_prefix = "/api/v1/browser-companion/extension/"
+        extension_request = request.url.path.startswith(extension_prefix)
+        extension_origin = request.headers.get("origin", "")
+        allowed_extension_origins = tuple(
+            getattr(
+                getattr(services, "settings", None),
+                "browser_companion_allowed_origins",
+                (),
+            )
+        )
+        origin_optional_status_read = (
+            request.method == "GET"
+            and not extension_origin
+            and _BROWSER_COMPANION_STATUS_PATH_RE.fullmatch(request.url.path)
+            is not None
+        )
         try:
-            if (
+            if extension_request:
+                if not origin_optional_status_read and not _extension_origin_allowed(
+                    extension_origin, allowed_extension_origins
+                ):
+                    logger.warning(
+                        "browser_companion_origin_rejected request_id=%s origin=%s",
+                        request_id,
+                        extension_origin or "<missing>",
+                    )
+                    response = _error_response("extension_origin_invalid", 403)
+                elif request.headers.get("content-encoding", "").lower() not in {
+                    "",
+                    "identity",
+                }:
+                    response = _error_response("capture_payload_invalid", 422)
+                elif request.method == "OPTIONS":
+                    response = Response(status_code=204)
+                else:
+                    response = await call_next(request)
+            elif (
                 services is not None
                 and request.method in _UNSAFE_METHODS
                 and request.url.path.startswith("/api/v1/")
@@ -279,9 +389,19 @@ def create_app(
         response.headers["Permissions-Policy"] = (
             "camera=(), microphone=(), geolocation=(), payment=()"
         )
+        if extension_request and _extension_origin_allowed(
+            extension_origin, allowed_extension_origins
+        ):
+            response.headers["Access-Control-Allow-Origin"] = extension_origin
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
+            response.headers["Access-Control-Allow-Headers"] = (
+                "Authorization, Content-Type, Idempotency-Key"
+            )
+            response.headers["Vary"] = "Origin"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; script-src 'self'; style-src 'self'; "
-            "img-src 'self' https://i.ytimg.com https://img.youtube.com data:; "
+            "img-src 'self' https://i.ytimg.com https://img.youtube.com "
+            "https://ntulearnvideo.ntu.edu.sg data:; "
             "connect-src 'self'; object-src 'none'; base-uri 'none'; "
             "frame-ancestors 'none'; form-action 'self'"
         )
@@ -309,8 +429,14 @@ def create_app(
 
     @app.exception_handler(RequestValidationError)
     async def safe_validation_error(
-        _request: Request, _exc: RequestValidationError
+        request: Request, exc: RequestValidationError
     ) -> JSONResponse:
+        if (
+            request.url.path
+            == "/api/v1/browser-companion/extension/captures"
+            and any(error.get("loc", ())[-1:] == ("protocol_version",) for error in exc.errors())
+        ):
+            return _error_response("capture_protocol_unsupported", 422)
         return _error_response("validation_error", 422)
 
     @app.get("/api/v1/health", response_model=HealthResponse, tags=["public"])
@@ -402,6 +528,19 @@ def create_app(
                 scope_dependency=authenticated_scope,
             )
         )
+        if (
+            services.browser_companion is not None
+            and services.browser_capture_submission is not None
+        ):
+            app.include_router(
+                build_browser_companion_router(
+                    services.browser_companion,
+                    services.browser_capture_submission,
+                    scope_dependency=authenticated_scope,
+                    web_origin=expected_origin or "",
+                    publish_budget_seconds=publish_budget_seconds,
+                )
+            )
 
         if services.include_conversation_routes:
             app.include_router(

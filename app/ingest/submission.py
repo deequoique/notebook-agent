@@ -1170,7 +1170,16 @@ class IngestSubmissionService:
     ) -> None:
         try:
             with self._session_factory() as db:
-                dispatch = db.get(IngestDispatch, dispatch_id)
+                # Lock the row before checking pending. A worker may claim
+                # and complete the dispatch between an unlocked read and the
+                # publisher's state update; the lock makes this transaction
+                # observe the worker's committed state instead of clobbering
+                # it with enqueued/failed.
+                dispatch = db.scalar(
+                    select(IngestDispatch)
+                    .where(IngestDispatch.id == dispatch_id)
+                    .with_for_update()
+                )
                 if dispatch is None or dispatch.state != "pending":
                     return
                 dispatch.state = state

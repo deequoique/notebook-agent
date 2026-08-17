@@ -28,7 +28,8 @@ def test_web_and_ingest_completion_branches_converge_on_one_merge_head():
     )
     assert script.get_revision("e5f6a7b8c9d0").down_revision == "d4e5f6a7b8c9"
     assert script.get_revision("f6a7b8c9d0e1").down_revision == "e5f6a7b8c9d0"
-    assert script.get_heads() == ["f1a2b3c4d5e6"]
+    assert script.get_heads() == ["b8c9d0e1f2a3"]
+    assert script.get_revision("b8c9d0e1f2a3").down_revision == "f1a2b3c4d5e6"
     assert script.get_revision("f1a2b3c4d5e6").down_revision == "b2c3d4e5f6a7"
 
 

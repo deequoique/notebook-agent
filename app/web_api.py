@@ -64,7 +64,7 @@ def create_web_api(
         publish_budget_seconds=float(
             getattr(settings, "web_publish_budget_seconds", 5.0)
         ),
-        save_enabled=bool(getattr(settings, "agent_save_enabled", True)),
+        save_enabled=True,
         web_login_channels=("email",),
         static_dir=None,
     )

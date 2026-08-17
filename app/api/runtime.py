@@ -8,6 +8,8 @@ from app.api.app import WebApiServices, create_app
 from app.api.conversation_routes import resolve_browser_session_identity
 from app.api.email_auth_routes import EmailWebAuthAdapter
 from app.config import Settings, get_settings
+from app.browser_capture_submission import BrowserCaptureSubmissionService
+from app.browser_companion import BrowserCompanionService
 from app.db import get_session_factory
 from app.ingest.submission import build_ingest_submission_service
 from app.object_store import RawObjectStore
@@ -61,6 +63,33 @@ def build_web_app(
         publisher = publish_ingest_dispatch
     store = object_store or RawObjectStore()
     submission = build_ingest_submission_service(factory, publisher, settings)
+    browser_companion = BrowserCompanionService(
+        factory,
+        pairing_ttl=timedelta(
+            seconds=getattr(settings, "browser_companion_pairing_ttl_seconds", 600)
+        ),
+        grant_ttl=timedelta(
+            seconds=getattr(
+                settings,
+                "browser_companion_grant_ttl_seconds",
+                90 * 24 * 60 * 60,
+            )
+        ),
+    )
+    browser_capture_submission = BrowserCaptureSubmissionService(
+        factory,
+        publisher,
+        store,
+        quota_policy=submission.quota_policy,
+        max_raw_bytes=getattr(
+            settings, "ingest_max_raw_transcript_bytes", 5_000_000
+        ),
+        max_cues=getattr(settings, "ingest_max_cues_per_item", 50_000),
+        max_text_chars=getattr(
+            settings, "ingest_max_text_chars_per_item", 1_000_000
+        ),
+        trash_retention_days=getattr(settings, "trash_retention_days", 30),
+    )
     email_enabled = bool(getattr(settings, "web_auth_enabled", False))
     if email_enabled:
         # Tests and embedders may inject the deterministic in-memory service;
@@ -112,10 +141,12 @@ def build_web_app(
             factory,
             publisher,
             quota_policy=submission.quota_policy,
-            save_enabled=settings.agent_save_enabled,
+            save_enabled=True,
         ),
         submission=submission,
         transcript=TranscriptService(factory, store),
+        browser_companion=browser_companion,
+        browser_capture_submission=browser_capture_submission,
     )
     serve_static = (
         settings.web_serve_static
@@ -127,7 +158,7 @@ def build_web_app(
         expected_origin=expected_origin,
         cookie_secure=True,
         publish_budget_seconds=settings.web_publish_budget_seconds,
-        save_enabled=settings.agent_save_enabled,
+        save_enabled=True,
         web_login_channels=public_login_channels,
         static_dir=settings.web_static_dir if serve_static else None,
     )

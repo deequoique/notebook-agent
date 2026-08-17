@@ -9,6 +9,7 @@ import {
 } from "../library/collections";
 import { lifecycleCopy } from "../library/lifecycle";
 import { formatDuration } from "../library/VideoCard";
+import { RouteLink } from "../app/RouteTransition";
 
 interface VideoDetailViewProps {
   item: LibraryItem;
@@ -26,8 +27,9 @@ interface VideoDetailViewProps {
   transcriptError?: boolean;
 }
 
-function timestampUrl(url: string, seconds: number): string {
+function timestampUrl(url: string, seconds: number, platform: string): string {
   const parsed = new URL(url);
+  if (platform === "ntu_kaltura") return `${parsed.origin}${parsed.pathname}`;
   parsed.searchParams.set("t", String(Math.max(0, Math.floor(seconds))));
   return parsed.toString();
 }
@@ -86,6 +88,7 @@ export function VideoDetailView({
   const nextCursor = transcriptPages.at(-1)?.next_cursor ?? null;
   const actions = new Set(item.available_actions);
   const language = formatLanguage(item.lang);
+  const platformLabel = item.platform === "ntu_kaltura" ? "NTULearn" : "YouTube";
   const collectionSuffixLength = savedContext.collections.reduce(
     (total, name) => total + name.length + 1,
     Math.max(0, savedContext.collections.length - 1),
@@ -122,12 +125,13 @@ export function VideoDetailView({
             {language ? <span>{language}</span> : null}
           </p>
           <div className="detail-actions" aria-label="视频操作">
-            <a className="button button--primary" href={item.url} target="_blank" rel="noreferrer">在 YouTube 查看</a>
+            <a className="button button--primary" href={item.url} target="_blank" rel="noreferrer">在 {platformLabel} 查看</a>
             {actions.has("retry") ? <button className="button button--quiet" disabled={actionPending} onClick={onRetry}>重新整理</button> : null}
             {actions.has("archive") ? <button className="button button--ghost" disabled={actionPending} onClick={onArchive}>归档</button> : null}
             {actions.has("restore") ? <button className="button button--quiet" disabled={actionPending} onClick={onRestore}>恢复到资料库</button> : null}
           </div>
           {actionError ? <p className="inline-error" role="alert" aria-label="视频操作失败">操作未完成，请稍后重试。</p> : null}
+          {item.error_code === "youtube_rate_limited" ? <p className="inline-error">服务器暂时无法访问 YouTube。你可以打开原视频，使用 <RouteLink to="/account/browser-companion">浏览器伴侣</RouteLink> 从当前浏览器保存字幕。</p> : null}
         </div>
       </header>
 
@@ -154,7 +158,7 @@ export function VideoDetailView({
               const start = Number(chapter.start_sec ?? chapter.start_time ?? chapter.start ?? 0);
               return (
                 <li key={`${start}-${index}`}>
-                  <a href={timestampUrl(item.url, start)} target="_blank" rel="noreferrer">
+                  <a href={timestampUrl(item.url, start, item.platform)} target="_blank" rel="noreferrer">
                     <time>{formatTimestamp(start)}</time>
                     <span>{chapter.title?.trim() || `章节 ${index + 1}`}</span>
                   </a>
@@ -167,7 +171,7 @@ export function VideoDetailView({
 
       {item.description?.trim() ? (
         <section className="detail-section" aria-labelledby="description-title">
-          <p className="eyebrow">来自 YouTube</p>
+          <p className="eyebrow">来自 {platformLabel}</p>
           <h2 id="description-title">视频简介</h2>
           <p className="description-copy">{item.description}</p>
         </section>
