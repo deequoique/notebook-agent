@@ -17,6 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.channels.types import UserScope
+from app.connectors.bilibili import canonicalize_bilibili_url
 from app.connectors.youtube import YouTubeConnector
 from app.config import get_settings
 from app.models import (
@@ -412,6 +413,14 @@ def normalize_item_reference(url: str) -> ItemReference:
     parsed = urlparse(value)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise InvalidURL("invalid URL")
+    bilibili = canonicalize_bilibili_url(value)
+    if bilibili is not None:
+        platform_id, canonical_url = bilibili
+        return ItemReference(
+            platform="bilibili",
+            platform_id=platform_id,
+            canonical_url=canonical_url,
+        )
     hostname = (parsed.hostname or "").lower()
     if hostname not in {
         "youtu.be",
