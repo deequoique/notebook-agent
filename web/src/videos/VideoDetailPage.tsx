@@ -2,6 +2,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { useParams } from "react-router";
 
 import {
+  ApiError,
   archiveItem,
   getLibraryItem,
   getTranscript,
@@ -31,7 +32,16 @@ export function VideoDetailPage() {
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
     enabled: item.data?.lifecycle === "ready",
-    retry: false,
+    // The transcript is read from object storage after the library item has
+    // already reached `ready`. A short object-store/network hiccup should not
+    // strand the detail page in the error state; deterministic contract
+    // failures (invalid data, a stale cursor, or an unavailable transcript)
+    // still stop after this small bounded retry budget.
+    retry: (failureCount, error) =>
+      error instanceof ApiError &&
+      error.code === "transcript_unavailable" &&
+      failureCount < 2,
+    retryDelay: (attemptIndex) => Math.min(1_000 * 2 ** attemptIndex, 3_000),
   });
   const action = useMutation({
     mutationFn: async (input: { type: "archive" | "restore" | "retry" | "why"; value?: string | null }) => {
