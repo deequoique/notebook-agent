@@ -47,16 +47,11 @@ def register_retrieval_tools(agent: Agent, policy: ToolPolicy) -> None:
     ) -> RetrievalToolPayload:
         """Execute a tenant-bound search, optionally narrowed to an observation."""
 
-        context_item_ids = set(ctx.deps.context.inventory_item_ids)
-        if (
-            item_id is not None
-            and not ctx.deps.actions.is_observed_item(item_id)
-            and item_id not in context_item_ids
-        ):
+        if item_id is not None and not ctx.deps.can_scope_search_to_item(item_id):
             # The model may only use an item reference returned by a successful
-            # current-run inventory/detail observation or a recent trusted
-            # inventory context reference.  No backend call is attempted for
-            # an unobserved or forged ID.
+            # current-run inventory/detail/search observation or a recent
+            # trusted inventory context reference.  No backend call is
+            # attempted for an unobserved or forged ID.
             ctx.deps.invalid_item_scope_attempt = True
             raise ModelRetry(
                 "先从本轮成功返回的知识库条目中选择一个条目，再进行限定检索。"
@@ -218,6 +213,11 @@ def register_retrieval_tools(agent: Agent, policy: ToolPolicy) -> None:
                 ctx.deps.last_empty_search_fingerprint = None
             elif fingerprint is not None:
                 ctx.deps.last_empty_search_fingerprint = fingerprint
+        # A reservation is not evidence of a completed read.  This marker is
+        # set only after the backend returned, including an empty result, and
+        # a later successful search invalidates any earlier no-evidence vote.
+        ctx.deps.successful_searches += 1
+        ctx.deps.no_relevant_evidence_requested = False
         return {
             "status": "ok",
             "evidence": [value.model_dump() for value in citations],

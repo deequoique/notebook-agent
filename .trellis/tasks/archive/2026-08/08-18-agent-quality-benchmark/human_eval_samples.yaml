@@ -1,0 +1,390 @@
+# 第一轮只需要填写 reference_answer；问题和评测元数据已预填。
+# baseline fixture 对应用户指定的视频 qz9tKlF431k。
+# 以下 Gold segment/timestamp 来自远端只读 transcript 快照（item_id=153）。
+schema_version: "1.0.0"
+dataset_id: "human-eval-v1"
+language: "zh-CN"
+samples:
+  - sample_id: "he-001"
+    case_id: "retrieval.search"
+    turn_index: 1
+    kind: "direct_keyword"
+    fixture_alias: "baseline"
+    query: "请针对知识库视频“{baseline_topic}”回答：请只根据知识库概括这个固定视频的主要内容。"
+    reference_answer: "这是一次模拟 Google 技术岗面试：软件工程师 Clément Mihailescu 面试高中生、竞赛编程选手 William Lin，视频展示他如何分析图相关问题、解释算法并完成编码面试。工程师非常赞许他的面试方式。"
+    gold_item_id: "153"
+    gold_segment_ids: ["1309", "1311", "1362", "1403", "1488", "1621"]
+    gold_timestamp_range: [0.03, 3423.34]
+    timestamp_tolerance_sec: 5
+    evidence_groups: [["1309", "1311"], ["1362"], ["1403"], ["1488"], ["1621"]]
+    reference_points: ["模拟 Google 编程面试", "William Lin 参加面试", "图问题与算法分析", "从分析推进到编码", "面试官给出高度评价"]
+    answer_boundary:
+      must_include: ["模拟 Google 编程面试", "图问题或算法分析", "编码过程"]
+      acceptable_paraphrases: ["技术面试演示", "从图问题分析到代码实现"]
+      must_not_claim: ["没有证据的外部经历或面试结果"]
+    annotation_note: ""
+
+  - sample_id: "he-002"
+    case_id: "retrieval.metadata-location"
+    turn_index: 1
+    kind: "direct_keyword"
+    fixture_alias: "baseline"
+    query: "请针对知识库视频“{baseline_topic}”回答：这个视频中提到的主要人物、对象或主题是什么？请给出知识库中的相关证据。"
+    reference_answer: "主要人物是面试官 Clément Mihailescu 和候选人 William Lin；主要主题是高中生参加 Google 风格编程面试，并围绕图、算法和编码展开。"
+    gold_item_id: "153"
+    gold_segment_ids: ["1309", "1311", "1322", "1362", "1403"]
+    gold_timestamp_range: [0.03, 1044.23]
+    timestamp_tolerance_sec: 5
+    evidence_groups: [["1309", "1311"], ["1362"], ["1403"]]
+    reference_points: ["Clément Mihailescu 是面试官", "William Lin 是候选人", "场景是 Google 风格编程面试", "主题涉及图、算法和编码"]
+    answer_boundary:
+      must_include: ["两位主要人物", "编程面试主题"]
+      acceptable_paraphrases: ["Google 风格技术面试", "高中生候选人"]
+      must_not_claim: ["视频没有提到的个人履历细节"]
+    annotation_note: ""
+
+  - sample_id: "he-003"
+    case_id: "retrieval.search"
+    turn_index: 1
+    kind: "direct_keyword"
+    fixture_alias: "baseline"
+    query: "请针对知识库视频“{baseline_topic}”回答：这个视频的核心观点或结论是什么？"
+    reference_answer: "展示候选人在面试压力下理解图问题、组织算法思路、解释数据表示和边，并把思路落实为代码的过程。"
+    gold_item_id: "153"
+    gold_segment_ids: ["1362", "1403", "1449", "1488"]
+    gold_timestamp_range: [541.55, 1977.53]
+    timestamp_tolerance_sec: 5
+    evidence_groups: [["1362"], ["1403"], ["1449"], ["1488"]]
+    reference_points: ["理解图问题", "组织算法思路", "讨论数据表示和边", "把思路落实为代码"]
+    answer_boundary:
+      must_include: ["图问题", "算法思路", "代码实现"]
+      acceptable_paraphrases: ["从建模到实现", "完整解题过程"]
+      must_not_claim: ["未出现在视频中的算法结论"]
+    annotation_note: ""
+
+  - sample_id: "he-004"
+    case_id: "retrieval.metadata-location"
+    turn_index: 1
+    kind: "direct_keyword"
+    fixture_alias: "baseline"
+    query: "请针对知识库视频“{baseline_topic}”回答：请找出视频中最能代表主题的一处原话，并给出它的大致时间位置。"
+    reference_answer: "00:04左右，in this video we're doing the most exciting google coding interview that i've conducted ever"
+    gold_item_id: "153"
+    gold_segment_ids: ["1309"]
+    gold_timestamp_range: [0.03, 13.68]
+    timestamp_tolerance_sec: 5
+    evidence_groups: [["1309"]]
+    reference_points: ["视频开头称这是一次 Google coding interview"]
+    answer_boundary:
+      must_include: ["原话或忠实转述", "大致时间位置"]
+      acceptable_paraphrases: ["开头几秒", "0:00 附近"]
+      must_not_claim: ["把章节标题当成原话"]
+    annotation_note: ""
+
+  - sample_id: "he-005"
+    case_id: "retrieval.search"
+    turn_index: 1
+    kind: "paraphrase"
+    fixture_alias: "baseline"
+    query: "请针对知识库视频“{baseline_topic}”回答：换一种说法，如果我要向别人介绍这个视频，它最重要的信息是什么？"
+    reference_answer: "可以把它介绍成一场教科书级别的，完整的模拟 Google 编程面试：一名高中竞赛编程选手现场分析图问题、讨论算法和数据表示，最后进行编码。"
+    gold_item_id: "153"
+    gold_segment_ids: ["1309", "1311", "1362", "1403", "1488"]
+    gold_timestamp_range: [0.03, 1977.53]
+    timestamp_tolerance_sec: 5
+    evidence_groups: [["1309", "1311"], ["1362"], ["1403"], ["1488"]]
+    reference_points: ["完整模拟 Google 编程面试", "高中竞赛编程选手", "图问题、算法和数据表示", "最终进入编码"]
+    answer_boundary:
+      must_include: ["模拟编程面试", "图问题分析", "编码环节"]
+      acceptable_paraphrases: ["教科书级别的面试演示", "从问题分析到实现"]
+      must_not_claim: ["视频之外的职业结论"]
+    annotation_note: ""
+
+  - sample_id: "he-006"
+    case_id: "retrieval.search"
+    turn_index: 1
+    kind: "direct_keyword"
+    fixture_alias: "baseline"
+    query: "请针对知识库视频“{baseline_topic}”回答：视频中实际要解决的编程题是什么？"
+    reference_answer: "题目要求根据机场和单向航线构成的有向图，从起始机场出发让所有机场可达，并计算需要补充的最少连接数。"
+    gold_item_id: "153"
+    gold_segment_ids: ["1326", "1327", "1403", "1406"]
+    gold_timestamp_range: [164.03, 1095.54]
+    timestamp_tolerance_sec: 5
+    evidence_groups: [["1326", "1327"], ["1403", "1406"]]
+    reference_points: ["输入包含机场列表和单向航线", "问题可表示为有向图", "目标是让起点可达所有机场", "算法通过强连通分量和入度计算答案"]
+    answer_boundary:
+      must_include: ["机场/航线有向图问题", "从起点使所有节点可达"]
+      acceptable_paraphrases: ["airport connections 问题", "补充最少连接"]
+      must_not_claim: ["视频没有给出的具体代码结果"]
+    annotation_note: "补入缺失的第六条直接检索样本。"
+
+  - sample_id: "he-007"
+    case_id: "retrieval.neighbors"
+    turn_index: 1
+    kind: "paraphrase"
+    fixture_alias: "baseline"
+    query: "请针对知识库视频“{baseline_topic}”回答：视频试图解释或说明什么？"
+    reference_answer: "视频试图展示候选人如何在面试中把图问题拆解为算法、数据表示和边的处理，并进一步写成代码；"
+    gold_item_id: "153"
+    gold_segment_ids: ["1362", "1403", "1449", "1488"]
+    gold_timestamp_range: [541.55, 1977.53]
+    timestamp_tolerance_sec: 5
+    evidence_groups: [["1362"], ["1403"], ["1449"], ["1488"]]
+    reference_points: ["拆解图问题", "说明算法和数据表示", "处理边", "进一步编码"]
+    answer_boundary:
+      must_include: ["图问题拆解", "算法或数据表示", "代码"]
+      acceptable_paraphrases: ["从建模到实现", "面试解题流程"]
+      must_not_claim: ["没有证据的算法细节"]
+    annotation_note: ""
+
+  - sample_id: "he-008"
+    case_id: "retrieval.neighbors"
+    turn_index: 1
+    kind: "paraphrase"
+    fixture_alias: "baseline"
+    query: "请针对知识库视频“{baseline_topic}”回答：哪些视频片段支持你对这个视频主题的概括？"
+    reference_answer: "至少可以用 Graphing（约 9:07）、Algorithm（约 17:08）、Representation（约 23:23）、Edges（约 26:35）和 Coding（约 32:43）这些部分支撑主题；"
+    gold_item_id: "153"
+    gold_segment_ids: ["1362", "1403", "1436", "1449", "1488"]
+    gold_timestamp_range: [541.55, 1977.53]
+    timestamp_tolerance_sec: 5
+    evidence_groups: [["1362"], ["1403"], ["1436"], ["1449"], ["1488"]]
+    reference_points: ["Graphing 章节", "Algorithm 章节", "Representation 章节", "Edges 章节", "Coding 章节"]
+    answer_boundary:
+      must_include: ["至少两处不同时间点的证据", "章节或片段位置"]
+      acceptable_paraphrases: ["图建模", "算法", "表示", "边", "编码"]
+      must_not_claim: ["章节标题之外的逐字引文"]
+    annotation_note: ""
+
+  - sample_id: "he-009"
+    case_id: "retrieval.search"
+    turn_index: 1
+    kind: "cross_language"
+    fixture_alias: "baseline"
+    query: "请针对知识库视频“{baseline_topic}”回答：请用中文概括这个视频反复传达的核心主题。"
+    reference_answer: "这是一个模拟 Google 编程面试，核心内容是候选人 William Lin 在面试中分析图相关问题、讨论算法与数据表示，并完成编码。"
+    gold_item_id: "153"
+    gold_segment_ids: ["1309", "1311", "1362", "1403", "1488"]
+    gold_timestamp_range: [0.03, 1977.53]
+    timestamp_tolerance_sec: 5
+    evidence_groups: [["1309", "1311"], ["1362"], ["1403"], ["1488"]]
+    reference_points: ["模拟 Google 编程面试", "William Lin", "图问题、算法和数据表示", "完成编码"]
+    answer_boundary:
+      must_include: ["中文概括", "编程面试主线"]
+      acceptable_paraphrases: ["mock Google coding interview", "从图问题到编码"]
+      must_not_claim: ["视频之外的事实"]
+    annotation_note: ""
+
+  - sample_id: "he-010"
+    case_id: "retrieval.search"
+    turn_index: 1
+    kind: "cross_language"
+    fixture_alias: "baseline"
+    query: "For the knowledge-base video ‘{baseline_topic}’: What is the main idea conveyed by this video? Please answer in Chinese and use only the knowledge base."
+    reference_answer: "The video shows a mock Google coding interview with high-school competitive programmer William Lin, moving from a graph problem through algorithm and representation details to coding."
+    gold_item_id: "153"
+    gold_segment_ids: ["1309", "1311", "1362", "1403", "1488"]
+    gold_timestamp_range: [0.03, 1977.53]
+    timestamp_tolerance_sec: 5
+    evidence_groups: [["1309", "1311"], ["1362"], ["1403"], ["1488"]]
+    reference_points: ["mock Google coding interview", "William Lin 是高中竞赛编程选手", "图问题到算法和表示", "最后进入编码"]
+    answer_boundary:
+      must_include: ["回答使用中文或忠实表达英文参考答案", "只使用知识库证据"]
+      acceptable_paraphrases: ["模拟 Google 技术面试", "从图问题分析到代码"]
+      must_not_claim: ["知识库之外的背景信息"]
+    annotation_note: "英文问题可以用中文或英文审阅；"
+
+  - sample_id: "he-011"
+    case_id: "retrieval.no-evidence"
+    turn_index: 1
+    kind: "no_evidence"
+    fixture_alias: "baseline"
+    query: "请针对知识库视频“{baseline_topic}”回答：这个视频是否讨论过量子计算机硬件？请只使用知识库证据。"
+    reference_answer: "知识库中没有证据表明这个固定视频讨论过量子计算机硬件，因此应明确说明无法根据知识库回答。"
+    gold_item_id: null
+    gold_segment_ids: []
+    gold_timestamp_range: null
+    timestamp_tolerance_sec: null
+    evidence_groups: []
+    reference_points: ["知识库没有量子计算机硬件相关证据"]
+    answer_boundary:
+      must_include: ["明确说明未找到相关知识库证据"]
+      acceptable_paraphrases: ["无法根据当前知识库确认"]
+      must_not_claim: ["视频讨论过量子计算机硬件", "外部常识替代知识库证据"]
+    no_evidence: true
+    annotation_note: "补入缺失的第三条 no-evidence 样本。"
+
+
+  - sample_id: "he-012"
+    case_id: "retrieval.neighbors"
+    turn_index: 1
+    kind: "multi_segment"
+    fixture_alias: "baseline"
+    query: "请针对知识库视频“{baseline_topic}”回答：请同时结合视频中前后两个片段，说明主题是如何展开的。"
+    reference_answer: "前半段先进入面试并提出/分析图问题，随后讨论算法；后半段进一步讲数据表示、边和添加边，最后进入 Coding。整体呈现从理解问题到实现的展开过程。"
+    gold_item_id: "153"
+    gold_segment_ids: ["1322", "1362", "1403", "1436", "1449", "1488"]
+    gold_timestamp_range: [134.87, 1977.53]
+    timestamp_tolerance_sec: 5
+    evidence_groups: [["1322", "1362"], ["1403"], ["1436", "1449"], ["1488"]]
+    reference_points: ["进入面试并提出图问题", "讨论算法", "讨论表示和边", "最后进入编码"]
+    answer_boundary:
+      must_include: ["前后两个时间点", "从理解问题到实现"]
+      acceptable_paraphrases: ["面试展开过程", "分析到编码"]
+      must_not_claim: ["未被片段支持的具体算法结论"]
+    annotation_note: "建议重点核对 2:18、9:07、17:08、23:23、26:35、27:28、32:43 附近。"
+
+  - sample_id: "he-013"
+    case_id: "retrieval.neighbors"
+    turn_index: 1
+    kind: "multi_segment"
+    fixture_alias: "baseline"
+    query: "请针对知识库视频“{baseline_topic}”回答：把视频开头和结尾的相关内容放在一起，这个视频想表达什么？"
+    reference_answer: "开头是面试介绍和问题展开，结尾进入 Coding；两端共同显示视频从模拟面试场景推进到把算法思路落实为代码。"
+    gold_item_id: "153"
+    gold_segment_ids: ["1309", "1322", "1488", "1621", "1624"]
+    gold_timestamp_range: [0.03, 3445.05]
+    timestamp_tolerance_sec: 5
+    evidence_groups: [["1309", "1322"], ["1488"], ["1621", "1624"]]
+    reference_points: ["开头介绍模拟面试", "中后段进入编码", "结尾总结面试表现并结束视频"]
+    answer_boundary:
+      must_include: ["开头和结尾两处证据", "模拟面试到代码实现"]
+      acceptable_paraphrases: ["两端共同支撑主线", "从面试场景到编码"]
+      must_not_claim: ["结尾没有出现的额外评价"]
+    annotation_note: "结尾是否完整覆盖代码过程，需以 transcript/入库片段为准。"
+
+  - sample_id: "he-014"
+    case_id: "retrieval.neighbors"
+    turn_index: 1
+    kind: "multi_segment"
+    fixture_alias: "baseline"
+    query: "请针对知识库视频“{baseline_topic}”回答：请找出两个不同时间点的证据，说明视频中的核心观点是否前后一致。"
+    reference_answer: "可以比较 Graphing 章节（约 9:07）和 Coding 章节（约 32:43）：前者侧重理解/建模图问题，后者侧重实现；两处共同支持“从分析到编码”的主线。"
+    gold_item_id: "153"
+    gold_segment_ids: ["1362", "1488"]
+    gold_timestamp_range: [541.55, 1977.53]
+    timestamp_tolerance_sec: 5
+    evidence_groups: [["1362"], ["1488"]]
+    reference_points: ["Graphing 处体现理解和建模", "Coding 处体现实现", "两处共同支持从分析到编码"]
+    answer_boundary:
+      must_include: ["两个不同时间点", "前后一致的主题主线"]
+      acceptable_paraphrases: ["Graphing 与 Coding", "分析到实现"]
+      must_not_claim: ["具体算法细节超出证据范围"]
+    annotation_note: "暂不声称具体算法细节。"
+
+  - sample_id: "he-015"
+    case_id: "retrieval.neighbors"
+    turn_index: 1
+    kind: "multi_segment"
+    fixture_alias: "baseline"
+    query: "请针对知识库视频“{baseline_topic}”回答：视频中哪些不同场景、例子或论据共同构成了它的主题？"
+    reference_answer: "不同内容环节包括模拟面试对话、图问题分析、算法讨论、数据表示、边和添加边的处理，以及最终编码；这些环节共同构成视频的编程面试主题。"
+    gold_item_id: "153"
+    gold_segment_ids: ["1322", "1362", "1403", "1436", "1449", "1488"]
+    gold_timestamp_range: [134.87, 1977.53]
+    timestamp_tolerance_sec: 5
+    evidence_groups: [["1322"], ["1362"], ["1403"], ["1436"], ["1449"], ["1488"]]
+    reference_points: ["模拟面试对话", "图问题分析", "算法讨论", "数据表示", "边和添加边", "最终编码"]
+    answer_boundary:
+      must_include: ["多个不同环节", "这些环节共同组成编程面试主题"]
+      acceptable_paraphrases: ["面试对话、图建模、算法、编码"]
+      must_not_claim: ["未出现在视频中的场景"]
+    annotation_note: ""
+
+  - sample_id: "he-016"
+    case_id: "retrieval.neighbors"
+    turn_index: 1
+    kind: "context"
+    fixture_alias: "baseline"
+    query: "请针对知识库视频“{baseline_topic}”回答：某句关键原话前后分别说了什么？为什么上下文会影响对它的理解？"
+    reference_answer: "这题需要从 transcript 选定一句关键原话后再回答；目前只能确认应同时保留该句所在章节和相邻上下文，不能凭页面简介补写引文。"
+    gold_item_id: "153"
+    gold_segment_ids: ["1403", "1406", "1408"]
+    gold_timestamp_range: [1026.95, 1116.36]
+    timestamp_tolerance_sec: 5
+    evidence_groups: [["1403", "1406", "1408"]]
+    reference_points: ["算法总览所在片段", "相邻片段提供前后文", "不能用页面简介代替 transcript 原话"]
+    answer_boundary:
+      must_include: ["关键原话及相邻上下文", "说明上下文影响"]
+      acceptable_paraphrases: ["算法章节附近的连续片段"]
+      must_not_claim: ["页面简介中的内容是 transcript 原话"]
+    annotation_note: "待 transcript 核对。"
+
+  - sample_id: "he-017"
+    case_id: "retrieval.neighbors"
+    turn_index: 1
+    kind: "context"
+    fixture_alias: "baseline"
+    query: "请针对知识库视频“{baseline_topic}”回答：请补充一处关键证据的前后文，并说明它和视频主题的关系。"
+    reference_answer: "应围绕某条图问题、算法或数据表示证据补出前后文，并说明它如何连接“分析问题”和“实现代码”这条主线；具体内容待 transcript 核对。"
+    gold_item_id: "153"
+    gold_segment_ids: ["1403", "1406", "1408"]
+    gold_timestamp_range: [1026.95, 1116.36]
+    timestamp_tolerance_sec: 5
+    evidence_groups: [["1403", "1406", "1408"]]
+    reference_points: ["选择算法证据", "补充前后连续片段", "连接分析问题与实现代码"]
+    answer_boundary:
+      must_include: ["前后文", "与整体主题的关系"]
+      acceptable_paraphrases: ["算法章节上下文"]
+      must_not_claim: ["未被 transcript 支持的逐字内容"]
+    annotation_note: "待 transcript 核对。"
+
+  - sample_id: "he-018"
+    case_id: "retrieval.neighbors"
+    turn_index: 1
+    kind: "context"
+    fixture_alias: "baseline"
+    query: "请针对知识库视频“{baseline_topic}”回答：请展开一条关于这个视频的证据的前后文，并说明它与整体主题的关系。"
+    reference_answer: "可以选择 Graphing、Algorithm、Representation、Edges 或 Coding 中的一条证据，说明它如何支持视频展示完整面试解题过程；不能把章节名当作逐字内容。"
+    gold_item_id: "153"
+    gold_segment_ids: ["1362", "1364", "1368"]
+    gold_timestamp_range: [541.55, 624.62]
+    timestamp_tolerance_sec: 5
+    evidence_groups: [["1362", "1364", "1368"]]
+    reference_points: ["Graphing 片段", "相邻 transcript 上下文", "与完整面试解题过程的关系"]
+    answer_boundary:
+      must_include: ["展开前后文", "说明与整体主题的关系"]
+      acceptable_paraphrases: ["Graphing 章节附近的连续片段"]
+      must_not_claim: ["章节标题本身就是逐字引文"]
+    annotation_note: "待 transcript 核对。"
+
+  - sample_id: "he-019"
+    case_id: "retrieval.no-evidence"
+    turn_index: 1
+    kind: "no_evidence"
+    fixture_alias: null
+    query: "请只根据知识库回答：月球背面的紫色咖啡机协议 ZQ-947 是什么？"
+    reference_answer: "知识库中没有关于“月球背面的紫色咖啡机协议 ZQ-947”的相关证据，因此应明确说明无法根据知识库回答。"
+    gold_item_id: null
+    gold_segment_ids: []
+    gold_timestamp_range: null
+    timestamp_tolerance_sec: null
+    evidence_groups: []
+    reference_points: ["知识库没有该协议的相关证据"]
+    answer_boundary:
+      must_include: ["明确说明知识库没有相关证据"]
+      acceptable_paraphrases: ["无法根据当前知识库回答"]
+      must_not_claim: ["该协议的具体内容", "外部常识替代知识库证据"]
+    no_evidence: true
+    annotation_note: "无证据样本，禁止模型用常识补齐。"
+
+  - sample_id: "he-020"
+    case_id: "retrieval.no-evidence"
+    turn_index: 1
+    kind: "no_evidence"
+    fixture_alias: "baseline"
+    query: "请针对知识库视频“{baseline_topic}”回答：这个视频中是否提到过月球背面的紫色咖啡机协议 ZQ-947？请只使用知识库证据。"
+    reference_answer: "目前没有知识库证据表明这个视频提到过“月球背面的紫色咖啡机协议 ZQ-947”；回答应明确说明未找到相关内容。"
+    gold_item_id: null
+    gold_segment_ids: []
+    gold_timestamp_range: null
+    timestamp_tolerance_sec: null
+    evidence_groups: []
+    reference_points: ["没有知识库证据表明该视频提到该协议"]
+    answer_boundary:
+      must_include: ["说明未找到相关内容"]
+      acceptable_paraphrases: ["知识库中没有相关证据"]
+      must_not_claim: ["视频提到过该协议", "外部常识替代知识库证据"]
+    no_evidence: true
+    annotation_note: "无证据样本，禁止模型虚构视频来源。"

@@ -35,19 +35,26 @@ server-owned.
 - A successful knowledge search requires the final natural text to contain at
   least one exact `[S<positive segment id>]` marker. Every marker must belong
   to the current run's Citation cache, satisfy exact reference scope when one
-  exists, and cover at most five source items. The server, never the model,
-  appends source titles, URLs, timestamps, and excerpts.
-- Invalid grounded text may receive one tool-free Composer repair against the
-  same evidence allow-list. The repair counts against the turn's two-action
-  RecoveryLedger and can happen at most once. Failure returns deterministic
-  trusted evidence. The repair currently receives its own `RunUsage`; do not
-  claim that primary-run provider/request usage is mechanically subtracted
-  until a separately tested shared-accounting change lands.
+  exists, cover at most five source items, and contain at most eight distinct
+  segments. The server, never the model, appends source titles, URLs,
+  timestamps, and excerpts.
+- Invalid grounded text or a failed primary run with trusted Citations enters a
+  tool-free answer Agent against the same server-filtered evidence allow-list.
+  It receives exactly three total provider attempts; invalid output, timeout,
+  usage limit, provider failure, and runtime failure each consume one attempt.
+  A successful structured selection returns validated server-rendered sources;
+  three failures return `failed/answer_unavailable` with empty Citations. Each
+  attempt has its own `RunUsage`; no primary-run budget is increased or
+  mechanically subtracted.
 - Inventory/detail reads are non-terminal observations, so
   a turn may list items and then search within an item returned by the current
-  run or bounded trusted prior inventory context. Domain services repeat
-  tenant, active/deleted, ready-state, item, and exact-reference predicates.
-  If no knowledge search follows, visible text and history use canonical
+  run or bounded trusted prior inventory context. A successful current-run
+  knowledge search is also a trusted Citation observation: after exact
+  current-message reference filtering, its Citation item may authorize a
+  subsequent scoped search in the same run. Prior source focus and raw model
+  history alone never authorize an item. Domain services repeat tenant,
+  active/deleted, ready-state, item, and exact-reference predicates. If no
+  knowledge search follows, visible text and history use canonical
   server-rendered read text rather than unconstrained model prose.
 - Save, management mutation, confirmation, cancellation, restore, and explicit
   ingestion retry remain terminal canonical outcomes. They are never retried
@@ -63,11 +70,12 @@ server-owned.
   persisted, added to history, or logged with its content.
 - Expected read failures expose only an allow-listed `ErrorEnvelope` and a
   server-issued recovery grant. An exact read fingerprint may be retried once;
-  all recovery actions together are capped at two; answer repair is capped at
-  one and shares that count. Empty search is an observation and a true changed-
-  query reformulation consumes one recovery action. Mutation, confirmation,
-  provider/model, policy/security, tenant/scope, deleted/non-ready, and
-  side-effect-indeterminate failures receive no autonomous retry.
+  all read recovery actions together are capped at two. Empty search is an
+  observation and a true changed-query reformulation consumes one recovery
+  action. Mutation, confirmation, provider/model, policy/security,
+  tenant/scope, deleted/non-ready, and side-effect-indeterminate failures
+  receive no autonomous retry; the separate answer Agent owns its fixed three
+  attempts.
 - `ContextBuilder` projects only completed current-tenant/thread inventory and
   prior source focus after current item/segment availability checks. Historical
   segment IDs help resolve conversation focus but never enter the current-run
@@ -100,25 +108,29 @@ class RetrievalToolPayload(TypedDict):
 
 class AnswerSection(BaseModel):
     text: str
-    citation_ids: list[int]
+    citation_ids: list[int]  # 1..8 per section; global distinct union <= 8
 
 class AnswerDraft(BaseModel):
+    selected_segment_ids: list[int]  # 1..8; final server-owned selection
     sections: list[AnswerSection]
 
 class ComposerDeps:
     citations: dict[int, Citation]       # prompt rows and validator allow-list
     excerpt_chars: int
+    required_item_ids: frozenset[int]
+    max_segments: int
 ```
 
 `AGENT_REQUEST_LIMIT`, `AGENT_TOOL_CALLS_LIMIT`, and
 `AGENT_OUTPUT_TOKEN_LIMIT` remain deployment safety limits. The primary Turn
-Agent and optional Composer repair each receive a new `RunUsage`; the
-configured output-token limit is therefore per stage, not a cumulative
-allowance.
+Agent and answer Agent each receive a new `RunUsage`; the configured
+output-token limit is therefore per stage, not a cumulative allowance. The
+answer Agent may make at most three total attempts, with a fresh usage object
+for each attempt.
 
 `AGENT_COMPOSER_MAX_TOKENS` defaults to 1000 and is the real provider-side cap
-for the optional Composer repair. It must be positive and must not exceed
-`AGENT_OUTPUT_TOKEN_LIMIT`. The repair uses `request_limit=1`,
+for each answer-agent attempt. It must be positive and must not exceed
+`AGENT_OUTPUT_TOKEN_LIMIT`. Each attempt uses `request_limit=1`,
 `output_retries=0`, and one answer-stage wall-clock timeout.
 
 ## 3. Contracts
@@ -144,20 +156,31 @@ for the optional Composer repair. It must be positive and must not exceed
 - A social/capability answer may finish without retrieval. Once a knowledge
   search succeeds, natural-answer validation requires current-run citations.
   Empty search remains distinct from a transient read failure; exhausted read
-  recovery returns `read_unavailable`, while trusted partial evidence may use
-  deterministic fallback.
-- Primary-agent usage-limit or timeout failures with trusted citations return
-  deterministic evidence fallback. Without citations they use phase-accurate
+  recovery returns `read_unavailable`, while a composable inventory read may
+  still return its bounded canonical partial read text. Trusted evidence never
+  bypasses the answer Agent with a deterministic evidence fallback.
+- Primary-agent usage-limit or timeout failures with trusted citations enter
+  the bounded answer Agent. Without citations they use phase-accurate
   failed-limit or timeout behavior. The raw hard limits remain defense in
   depth; increasing them is not a convergence fix.
-- The Composer has no retrieval or action tools. It receives only the user
-  question and bounded Citation title, excerpt, timestamp, and segment-ID
-  allow-list. It uses `PromptedOutput(AnswerDraft)` to parse schema-prompted
-  JSON text without an output tool or `tool_choice=required`. `AnswerDraft`
-  validation requires every cited ID to be allowed, every section to cite
-  evidence, and at most five distinct cited item IDs. Composer is invoked only
-  for one same-evidence repair after natural-answer validation fails. It has no
-  output retry and never starts a fresh search.
+- The answer Agent has no retrieval or action tools. It receives only the user
+  question and all bounded current-run Citation title, excerpt, timestamp, and
+  segment-ID candidates. It uses `PromptedOutput(AnswerDraft)` to parse
+  schema-prompted JSON text without an output tool or `tool_choice=required`.
+  The server validates that every selected and cited ID is allowed, every
+  section cites evidence, the union of section ``citation_ids`` exactly equals
+  top-level ``selected_segment_ids``, selected text contains no model-authored
+  URL/source block, the selection has at most five distinct items and eight
+  distinct segments, and every explicit-scope item with evidence remains
+  selected. The answer Agent
+  itself chooses relevance and segment allocation; eight is an output cap, not
+  a retrieval-order prefilter. It has no output retry and never starts a fresh
+  search. When an attempt is rejected, the next attempt may receive only one
+  fixed, allow-listed failure category and concise correction guidance
+  (`invalid_structure`, `unsafe_text`, `missing_citation`,
+  `invalid_citation`, `too_many_segments`, `too_many_items`,
+  `missing_scope_item`, or `provider_failure`). Previous drafts, questions,
+  Citation values, URLs, and provider payloads never enter the feedback.
 - Every Composer request sends `AGENT_COMPOSER_MAX_TOKENS` as the provider's
   actual `max_tokens` generation cap. For DeepSeek Chat Completions, the model
   profile must retain DeepSeek response/tool semantics, map the field to
@@ -165,29 +188,31 @@ for the optional Composer repair. It must be positive and must not exceed
   `thinking: {"type": "disabled"}` without `reasoning_effort=none`.
   Other compatible Composer models request provider-neutral `thinking=False`
   when supported. Retrieval model settings remain unchanged.
-- Before repair, the server projects at most five source items in retrieval
-  order. Invalid citations, output-token exhaustion, provider failures, and
-  timeouts do not trigger another Composer request; they return deterministic
-  evidence fallback.
+- The server projects all bounded current-run evidence in retrieval order for
+  answer selection. Invalid citations, output-token exhaustion, provider
+  failures, and timeouts consume one of the three answer attempts. No
+  deterministic evidence fallback is returned.
 - The application appends `[S<segment_id>]` markers after validating the
   structured draft, and source rendering owns titles and real URLs. Sources
   are grouped once per item in retrieval order, retain distinct timestamp
   evidence under the item, and never infer chapter titles.
-- Composer validation failure, timeout, provider failure, or usage-limit
-  failure discards the draft and returns `status=ok` evidence fallback. The
-  fallback begins with `自动总结未完成，以下是知识库中最相关的证据：` and contains only
-  real grouped sources, timestamp links, and bounded excerpts.
-- Knowledge success and fallback persist only normalized user question plus
-  final visible answer, while the conversation turn keeps public Citation
-  sources. Tool payloads, intermediate Turn Agent text, Composer repair prompts,
-  and invalid drafts are never persisted.
+- Answer validation failure, timeout, provider failure, or usage-limit failure
+  discards the draft and consumes an attempt. After three failures, the public
+  result is `failed/answer_unavailable` with empty Citations and no answer
+  history. Successful knowledge answers persist only the normalized user
+  question plus final visible answer, while the conversation turn keeps the
+  same validated public Citation selection. Tool payloads, intermediate Turn
+  Agent text, answer prompts, and invalid drafts are never persisted.
 - Diagnostics use only fixed safe fields. Retrieval events carry
   `agent_phase=retrieval`; composer events carry `agent_phase=answer`.
-  `tool_outcome=skipped` is allowed. `ModelHTTPError` additionally projects
-  its validated integer `http_status`. Production forbids its body and message;
-  explicit development records its complete message/model/body for diagnosis.
-  Production logs never include questions, tool arguments/results, excerpts,
-  IDs, drafts, URLs, or exception messages.
+  `tool_outcome=skipped` is allowed. Answer-stage retries project only a safe
+  error class, attempt index, failure category, allow-listed validation
+  `failure_reason`, and validated integer `http_status` when applicable; they
+  never pass provider exception objects.
+  Primary retrieval `ModelHTTPError` diagnostics retain the existing
+  development-only detail policy, while production forbids its body and
+  message. Production logs never include questions, tool arguments/results,
+  excerpts, IDs, drafts, URLs, or exception messages.
 
 ## 4. Validation & Error Matrix
 
@@ -195,15 +220,15 @@ for the optional Composer repair. It must be positive and must not exceed
 | --- | --- |
 | provider emits several retrieval calls in one response | exactly one backend retrieval runs; remaining calls are typed skipped results |
 | normal search/expansion budgets are exhausted | no further backend retrieval; existing trusted evidence remains usable |
-| successful searches have no evidence | bounded empty-search recovery or `not_found/no_evidence`, no Composer repair |
-| primary timeout or usage limit after evidence | log retrieval phase/kind and return deterministic evidence fallback |
+| successful searches have no evidence | bounded empty-search recovery or `not_found/no_evidence`, no answer-agent recovery |
+| primary timeout or usage limit after evidence | log retrieval phase/kind and run the three-attempt answer Agent |
 | primary timeout or usage limit without evidence | fail closed with phase-accurate wording |
-| natural answer has unknown/missing IDs or six item IDs | one tool-free Composer request using the projected same-evidence allow-list |
-| Composer draft is invalid, truncated, over limit, timed out, or provider fails | `ok` deterministic fallback from trusted evidence; no second Composer request or draft persistence |
-| provider HTTP request fails | preserve phase behavior; production logs safe status/class, development also logs full error details |
+| natural answer has unknown/missing IDs or six item IDs | run the tool-free answer Agent against the same evidence allow-list |
+| answer draft is invalid, truncated, over limit, timed out, or provider fails | consume one of three answer attempts; after exhaustion return `failed/answer_unavailable` with no Citations or draft persistence |
+| provider HTTP request fails | preserve phase behavior; answer-stage retries log only safe status/class; primary retrieval follows the development-only detail policy |
 | valid answer draft | server-rendered markers and grouped real sources, at most five items |
 | action succeeds, including a mixed tool batch | canonical action result wins and composer does not run |
-| read failure exhausts its bounded recovery | `failed/read_unavailable` without evidence, otherwise trusted partial/evidence fallback |
+| read failure exhausts its bounded recovery | `failed/read_unavailable` without evidence, otherwise the bounded canonical partial read result; trusted Citations enter the three-attempt answer Agent |
 
 ## 5. Good / Base / Bad Cases
 
@@ -226,14 +251,17 @@ for the optional Composer repair. It must be positive and must not exceed
 - A batched `FunctionModel` returns two searches, then two neighbor calls and
   one metadata call with non-zero `RequestUsage.output_tokens` totaling 2066.
   Assert one backend retrieval per model step, typed skipped payloads, no
-  extra embedding/SQL work, and a trusted final answer or evidence fallback.
+  extra embedding/SQL work, and a trusted final answer or bounded answer-agent
+  recovery result.
 - Cover normal 5/2/3 convergence, zero-hit exit, hard request/tool limits,
   phase-correct output-token diagnostics, and retrieval embedding/database
   failures.
-- Cover direct valid natural answers, one same-evidence Composer repair,
-  invalid-draft fallback, timeout fallback, provider-error fallback,
-  provider-cap request serialization, and output-token fallback. Assert repair
-  runs at most once, starts no retrieval, and persists no invalid model content.
+- Cover direct valid natural answers, three total same-evidence answer-agent
+  attempts, invalid-draft exhaustion, timeout exhaustion, provider-error
+  exhaustion, provider-cap request serialization, and output-token exhaustion.
+  Assert recovery starts no retrieval, feeds only fixed validation categories
+  to attempts 2/3, returns `answer_unavailable` with empty Citations after the
+  third failure, and persists no invalid model content.
 - Cover hybrid duplicate collapse, one-item crowding, six-item selection,
   distant same-item segments, public limit clamping, bounded candidate pool,
   and PostgreSQL tenant predicates during hydration.
@@ -264,7 +292,8 @@ with turn_agent.parallel_tool_call_execution_mode("sequential"):
 if deps.reserve_retrieval(run_step=ctx.run_step, kind=kind) is not EXECUTE:
     return {"status": "skipped", "evidence": [], "reason": "same_model_step"}
 
-# One tool-free Composer repair can use only trusted cached evidence.
+# Each tool-free answer-agent attempt can use only trusted cached evidence;
+# the outer recovery stage allows at most three total attempts.
 answer = await composer.run(question, deps=ComposerDeps(allowed_citations))
 ```
 
@@ -353,7 +382,7 @@ it must never normalize into unrestricted retrieval.
 | bare supported URL batch | durable `save_confirmation_required`; zero model requests; no retrieval service |
 | bare unsupported or malformed URL | existing safe validation code; no accidental supported confirmation |
 | URL plus semantic content question, referenced item ready | every tool result and final citation belongs to an exact referenced item |
-| referenced item absent, deleted, non-ready, or without evidence | `not_found/no_evidence`; no other item fallback and no Composer |
+| referenced item absent, deleted, non-ready, or without evidence | `not_found/no_evidence`; no other item fallback and no answer-agent recovery |
 | model reuses an out-of-scope segment/item ID from history | empty successful lookup; ID never enters trusted citations |
 | malformed non-empty scope reaches a knowledge service | false predicate / zero rows, never unrestricted search |
 | URL content question while an old save/delete action is pending | current question remains retrieval-only; old pending action is unchanged |

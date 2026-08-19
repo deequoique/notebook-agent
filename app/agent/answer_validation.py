@@ -79,6 +79,8 @@ def validate_natural_answer(
     explicit_reference_scope: tuple[tuple[str, str], ...] = (),
     citation_matches_scope: Callable[[Any, tuple[tuple[str, str], ...]], bool] | None = None,
     max_source_items: int = 5,
+    max_segments: int = 8,
+    required_item_ids: frozenset[int] = frozenset(),
 ) -> ValidatedNaturalAnswer:
     """Validate one bounded Agent answer against trusted current-run facts.
 
@@ -86,7 +88,10 @@ def validate_natural_answer(
     natural prose is accepted but any marker, URL, or source block is rejected.
     A successful knowledge search requires at least one marker and validates
     every marker against the supplied current-run allow-list.  IDs from prior
-    turns are absent from that map and therefore fail closed.
+    turns are absent from that map and therefore fail closed. ``max_segments``
+    caps the distinct current-run markers selected by one answer. When
+    ``required_item_ids`` is supplied, every evidence-bearing exact-scope item
+    must appear in the selected markers.
     """
 
     if not isinstance(text, str):
@@ -126,6 +131,12 @@ def validate_natural_answer(
     }
     if None in item_ids or len(item_ids) > max_source_items:
         raise NaturalAnswerValidationError("answer cites too many source items")
+    if len(marker_ids) > max_segments:
+        raise NaturalAnswerValidationError("answer cites too many source segments")
+    if required_item_ids and not required_item_ids.issubset(item_ids):
+        raise NaturalAnswerValidationError(
+            "answer omits an evidence-bearing exact-scope item"
+        )
     return ValidatedNaturalAnswer(
         normalized,
         citation_ids=marker_ids,

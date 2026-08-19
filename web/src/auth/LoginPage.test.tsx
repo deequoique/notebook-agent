@@ -41,7 +41,7 @@ describe("login page", () => {
     expect(container.querySelector(".wordmark .brand-logo")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "下载浏览器伴侣" })).toHaveAttribute(
       "href",
-      "/assets/notebook-agent-browser-companion-local-0.1.3.zip",
+      "/assets/notebook-agent-browser-companion-production-0.1.3.zip",
     );
     expect(screen.getByRole("link", { name: "下载浏览器伴侣" })).toHaveAttribute("download");
     expect(within(wechat).getByTestId("wechat-brand-icon")).toBeInTheDocument();

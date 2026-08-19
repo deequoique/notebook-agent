@@ -18,7 +18,9 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "08-14-browser-companion-pairing-failure"
+  ],
   "parent": null,
   "relatedFiles": [],
   "notes": "",

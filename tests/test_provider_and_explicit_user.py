@@ -52,6 +52,7 @@ async def test_deepseek_composer_uses_real_cap_and_disables_thinking_on_wire():
                     "message": {
                         "role": "assistant",
                         "content": json.dumps({
+                            "kind": "grounded",
                             "sections": [{
                                 "text": "grounded",
                                 "citation_ids": [3],

@@ -21,7 +21,6 @@ from app.agent.actions import ActionInputMismatch, AgentActionRuntime, AgentActi
 from app.agent.agent_builder import build_agent
 from app.agent.answer_pipeline import (
     AnswerPipeline,
-    _append_sources,
     _canonical_history,
     build_composer,
 )
@@ -29,9 +28,11 @@ from app.agent.answer_validation import NaturalAnswerValidationError, validate_n
 from app.agent.autonomy import RecoveryLedger, RecoveryPolicy, TodoValidationError, TurnTodoStore
 from app.agent.context import TurnContext
 from app.agent.provider import composer_model_settings
+from app.agent.response import GroundedResponseSection, ResponseEnvelope
 from app.agent.runtime_state import (
     AgentDeps,
     AgentExecution,
+    COMPRESSED_EVIDENCE_LIMIT,
     MAX_SOURCE_ITEMS,
     _citation_matches_scope,
 )
@@ -189,6 +190,17 @@ class KnowledgeAgent:
             composable_reads=True,
         )
 
+    @staticmethod
+    def _search_completed_without_evidence(deps: AgentDeps) -> bool:
+        """Whether a clean successful search permits no-evidence projection."""
+
+        return bool(
+            deps.successful_searches
+            and not deps.citations
+            and not deps.pending_read_failures
+            and not deps.read_recovery_exhausted
+        )
+
     def _build_deps(
         self,
         request: AgentRequest,
@@ -249,9 +261,30 @@ class KnowledgeAgent:
             return _PrimaryResult(result)
         except TimeoutError:
             diagnostics.event("agent_failed", error_code="timeout", agent_phase="retrieval")
+            if deps.actions.outcome is not None:
+                return self._terminal_action_execution(
+                    request, deps.actions.outcome, diagnostics
+                )
+            if deps.invalid_item_scope_attempt:
+                return self._failure(
+                    request,
+                    "只能依据本轮已返回的条目继续限定检索。",
+                    "item_scope_required",
+                    diagnostics,
+                    log_event=False,
+                )
             if deps.citations:
-                return self._answer_pipeline.evidence_fallback(
-                    request, list(deps.citations.values())
+                recovered = await self._answer_pipeline.recover_answer(
+                    request, deps, diagnostics
+                )
+                if recovered.answer.status == "ok":
+                    recovered.answer.action_results = list(
+                        deps.actions.read_action_results
+                    )
+                return recovered
+            if self._search_completed_without_evidence(deps):
+                return self._answer_pipeline.no_evidence(
+                    request, diagnostics, deps.actions.read_action_results
                 )
             if partial := self._partial_read_fallback(request, deps):
                 return partial
@@ -274,6 +307,10 @@ class KnowledgeAgent:
                 projected_value=used if kind == "tool_calls" else None,
                 agent_phase="retrieval",
             )
+            if deps.actions.outcome is not None:
+                return self._terminal_action_execution(
+                    request, deps.actions.outcome, diagnostics
+                )
             if deps.invalid_item_scope_attempt:
                 return self._failure(
                     request,
@@ -283,8 +320,12 @@ class KnowledgeAgent:
                     log_event=False,
                 )
             if deps.citations:
-                return self._answer_pipeline.evidence_fallback(
-                    request, list(deps.citations.values())
+                return await self._answer_pipeline.recover_answer(
+                    request, deps, diagnostics
+                )
+            if self._search_completed_without_evidence(deps):
+                return self._answer_pipeline.no_evidence(
+                    request, diagnostics, deps.actions.read_action_results
                 )
             if partial := self._partial_read_fallback(request, deps):
                 return partial
@@ -296,9 +337,25 @@ class KnowledgeAgent:
                 log_event=False,
             )
         except EmbeddingUnavailable:
+            if deps.actions.outcome is not None:
+                return self._terminal_action_execution(
+                    request, deps.actions.outcome, diagnostics
+                )
+            if deps.invalid_item_scope_attempt:
+                return self._failure(
+                    request,
+                    "只能依据本轮已返回的条目继续限定检索。",
+                    "item_scope_required",
+                    diagnostics,
+                    log_event=False,
+                )
             if deps.citations:
-                return self._answer_pipeline.evidence_fallback(
-                    request, list(deps.citations.values())
+                return await self._answer_pipeline.recover_answer(
+                    request, deps, diagnostics
+                )
+            if self._search_completed_without_evidence(deps):
+                return self._answer_pipeline.no_evidence(
+                    request, diagnostics, deps.actions.read_action_results
                 )
             return self._failure(
                 request,
@@ -307,9 +364,25 @@ class KnowledgeAgent:
                 diagnostics,
             )
         except RetrievalUnavailable:
+            if deps.actions.outcome is not None:
+                return self._terminal_action_execution(
+                    request, deps.actions.outcome, diagnostics
+                )
+            if deps.invalid_item_scope_attempt:
+                return self._failure(
+                    request,
+                    "只能依据本轮已返回的条目继续限定检索。",
+                    "item_scope_required",
+                    diagnostics,
+                    log_event=False,
+                )
             if deps.citations:
-                return self._answer_pipeline.evidence_fallback(
-                    request, list(deps.citations.values())
+                return await self._answer_pipeline.recover_answer(
+                    request, deps, diagnostics
+                )
+            if self._search_completed_without_evidence(deps):
+                return self._answer_pipeline.no_evidence(
+                    request, diagnostics, deps.actions.read_action_results
                 )
             return self._failure(
                 request,
@@ -325,9 +398,25 @@ class KnowledgeAgent:
                 http_status=exc.status_code,
                 agent_phase="retrieval",
             )
+            if deps.actions.outcome is not None:
+                return self._terminal_action_execution(
+                    request, deps.actions.outcome, diagnostics
+                )
+            if deps.invalid_item_scope_attempt:
+                return self._failure(
+                    request,
+                    "只能依据本轮已返回的条目继续限定检索。",
+                    "item_scope_required",
+                    diagnostics,
+                    log_event=False,
+                )
             if deps.citations:
-                return self._answer_pipeline.evidence_fallback(
-                    request, list(deps.citations.values())
+                return await self._answer_pipeline.recover_answer(
+                    request, deps, diagnostics
+                )
+            if self._search_completed_without_evidence(deps):
+                return self._answer_pipeline.no_evidence(
+                    request, diagnostics, deps.actions.read_action_results
                 )
             if partial := self._partial_read_fallback(request, deps):
                 return partial
@@ -339,6 +428,24 @@ class KnowledgeAgent:
                 log_event=False,
             )
         except UnexpectedModelBehavior as exc:
+            if deps.actions.outcome is not None:
+                return self._terminal_action_execution(
+                    request, deps.actions.outcome, diagnostics
+                )
+            if deps.actions.input_mismatch:
+                outcome = deps.actions.finalize_input_mismatch()
+                diagnostics.event("action_validated", error_code=outcome.error_code)
+                envelope = ResponseEnvelope.action(
+                    status=outcome.status,
+                    text=outcome.text,
+                    action_code=outcome.error_code or "action_failed",
+                    results=outcome.results,
+                    error_code=outcome.error_code,
+                )
+                return AgentExecution(
+                    envelope.project(thread_id=request.thread_public_id),
+                    [],
+                )
             if deps.invalid_item_scope_attempt:
                 return self._failure(
                     request,
@@ -347,19 +454,6 @@ class KnowledgeAgent:
                     diagnostics,
                     log_event=False,
                 )
-            if deps.actions.input_mismatch:
-                outcome = deps.actions.finalize_input_mismatch()
-                diagnostics.event("action_validated", error_code=outcome.error_code)
-                return AgentExecution(
-                    AgentAnswer(
-                        status=outcome.status,
-                        text=outcome.text,
-                        action_results=list(outcome.results),
-                        thread_id=request.thread_public_id,
-                        error_code=outcome.error_code,
-                    ),
-                    [],
-                )
             diagnostics.event(
                 "agent_failed",
                 error_code="runtime_error",
@@ -367,8 +461,12 @@ class KnowledgeAgent:
                 agent_phase="retrieval",
             )
             if deps.citations:
-                return self._answer_pipeline.evidence_fallback(
-                    request, list(deps.citations.values())
+                return await self._answer_pipeline.recover_answer(
+                    request, deps, diagnostics
+                )
+            if self._search_completed_without_evidence(deps):
+                return self._answer_pipeline.no_evidence(
+                    request, diagnostics, deps.actions.read_action_results
                 )
             if partial := self._partial_read_fallback(request, deps):
                 return partial
@@ -380,13 +478,10 @@ class KnowledgeAgent:
                 log_event=False,
             )
         except KnowledgeNotFound:
-            return self._failure(
-                request,
-                "请求的知识片段不存在。",
-                "not_found",
-                diagnostics,
-            )
-        except Exception as exc:
+            if deps.actions.outcome is not None:
+                return self._terminal_action_execution(
+                    request, deps.actions.outcome, diagnostics
+                )
             if deps.invalid_item_scope_attempt:
                 return self._failure(
                     request,
@@ -395,15 +490,46 @@ class KnowledgeAgent:
                     diagnostics,
                     log_event=False,
                 )
+            if deps.citations:
+                return await self._answer_pipeline.recover_answer(
+                    request, deps, diagnostics
+                )
+            if self._search_completed_without_evidence(deps):
+                return self._answer_pipeline.no_evidence(
+                    request, diagnostics, deps.actions.read_action_results
+                )
+            return self._failure(
+                request,
+                "请求的知识片段不存在。",
+                "not_found",
+                diagnostics,
+            )
+        except Exception as exc:
             diagnostics.event(
                 "agent_failed",
                 error_code="runtime_error",
                 exception=exc,
                 agent_phase="retrieval",
             )
+            if deps.actions.outcome is not None:
+                return self._terminal_action_execution(
+                    request, deps.actions.outcome, diagnostics
+                )
+            if deps.invalid_item_scope_attempt:
+                return self._failure(
+                    request,
+                    "只能依据本轮已返回的条目继续限定检索。",
+                    "item_scope_required",
+                    diagnostics,
+                    log_event=False,
+                )
             if deps.citations:
-                return self._answer_pipeline.evidence_fallback(
-                    request, list(deps.citations.values())
+                return await self._answer_pipeline.recover_answer(
+                    request, deps, diagnostics
+                )
+            if self._search_completed_without_evidence(deps):
+                return self._answer_pipeline.no_evidence(
+                    request, diagnostics, deps.actions.read_action_results
                 )
             if partial := self._partial_read_fallback(request, deps):
                 return partial
@@ -448,12 +574,18 @@ class KnowledgeAgent:
                     recovery_count=deps.recovery_ledger.remaining_actions,
                     agent_phase="retrieval",
                 )
+            if deps.citations:
+                recovered = await self._answer_pipeline.recover_answer(
+                    request, deps, diagnostics
+                )
+                if recovered.answer.status == "ok":
+                    recovered.answer.action_results = list(
+                        deps.actions.read_action_results
+                    )
+                return recovered
+            if deps.actions.read_action_texts:
                 if partial := self._partial_read_fallback(request, deps):
                     return partial
-            if deps.citations:
-                return self._answer_pipeline.evidence_fallback(
-                    request, list(deps.citations.values())
-                )
             return self._failure(
                 request,
                 "后续读取暂时不可用，请稍后重试。",
@@ -462,9 +594,21 @@ class KnowledgeAgent:
                 log_event=False,
             )
 
+        # A no-evidence tool call is a disposition, not model prose.  It is
+        # accepted only after a successful search and the read/action gates
+        # above have passed; candidate rows are intentionally discarded.
+        if deps.no_relevant_evidence_requested and deps.successful_searches:
+            return self._answer_pipeline.no_evidence(
+                request, diagnostics, deps.actions.read_action_results
+            )
+
         natural_text = getattr(agent_result, "output", None)
         if not isinstance(natural_text, str):
             diagnostics.event("agent_failed", error_code="answer_unavailable", agent_phase="answer")
+            if deps.citations:
+                return await self._answer_pipeline.recover_answer(
+                    request, deps, diagnostics
+                )
             return self._failure(
                 request,
                 "暂时无法生成回答，请稍后重试。",
@@ -478,6 +622,10 @@ class KnowledgeAgent:
             )
         except TodoValidationError:
             diagnostics.event("agent_failed", error_code="todo_incomplete", agent_phase="retrieval")
+            if deps.citations:
+                return await self._answer_pipeline.recover_answer(
+                    request, deps, diagnostics
+                )
             return self._failure(
                 request,
                 "当前步骤尚未完成，请说明要继续哪一步。",
@@ -497,13 +645,13 @@ class KnowledgeAgent:
             if deps.actions.read_action_texts:
                 read_text = "\n".join(deps.actions.read_action_texts)
                 diagnostics.event("citation_validated", agent_phase="answer")
+                envelope = ResponseEnvelope.canonical(
+                    text=read_text,
+                    template_key="management_read",
+                    action_results=deps.actions.read_action_results,
+                )
                 return AgentExecution(
-                    AgentAnswer(
-                        status="ok",
-                        text=read_text,
-                        action_results=list(deps.actions.read_action_results),
-                        thread_id=request.thread_public_id,
-                    ),
+                    envelope.project(thread_id=request.thread_public_id),
                     _canonical_history(request.question, read_text),
                 )
             try:
@@ -532,21 +680,9 @@ class KnowledgeAgent:
                 _canonical_history(request.question, validated.text),
             )
 
-        if not deps.citations:
-            diagnostics.event(
-                "citation_validated",
-                error_code="no_evidence",
-                agent_phase="retrieval",
-            )
-            return AgentExecution(
-                AgentAnswer(
-                    status="not_found",
-                    text="知识库中未找到足够证据。",
-                    action_results=list(deps.actions.read_action_results),
-                    thread_id=request.thread_public_id,
-                    error_code="no_evidence",
-                ),
-                [],
+        if deps.successful_searches and not deps.citations:
+            return self._answer_pipeline.no_evidence(
+                request, diagnostics, deps.actions.read_action_results
             )
 
         try:
@@ -557,34 +693,44 @@ class KnowledgeAgent:
                 explicit_reference_scope=reference_scope,
                 citation_matches_scope=_citation_matches_scope,
                 max_source_items=MAX_SOURCE_ITEMS,
+                max_segments=COMPRESSED_EVIDENCE_LIMIT,
+                required_item_ids=(
+                    frozenset(citation.item_id for citation in deps.citations.values())
+                    if reference_scope
+                    else frozenset()
+                ),
             )
         except NaturalAnswerValidationError:
-            repaired = await self._answer_pipeline.repair_bounded_answer(
+            repaired = await self._answer_pipeline.recover_answer(
                 request, deps, diagnostics
             )
-            repaired.answer.action_results = list(deps.actions.read_action_results)
+            if repaired.answer.status == "ok":
+                repaired.answer.action_results = list(deps.actions.read_action_results)
             return repaired
 
-        selected_ids = set(validated.citation_ids)
         selected = [
-            citation
-            for citation in deps.citations.values()
-            if citation.segment_id in selected_ids
+            deps.citations[segment_id]
+            for segment_id in validated.citation_ids
+            if segment_id in deps.citations
         ]
-        answer_text = _append_sources(validated.text, selected)
+        model_text = re.sub(r"\[S[1-9][0-9]*\]", "", validated.text).strip()
         diagnostics.event(
             "citation_validated",
             result_count=len(selected),
             agent_phase="answer",
         )
-        return AgentExecution(
-            AgentAnswer(
-                status="ok",
-                text=answer_text,
-                citations=selected,
-                action_results=list(deps.actions.read_action_results),
-                thread_id=request.thread_public_id,
+        envelope = ResponseEnvelope.grounded(
+            sections=(
+                GroundedResponseSection(
+                    "grounded", model_text, tuple(validated.citation_ids)
+                ),
             ),
+            citations=selected,
+            action_results=deps.actions.read_action_results,
+        )
+        answer_text = envelope.project(thread_id=request.thread_public_id).text
+        return AgentExecution(
+            envelope.project(thread_id=request.thread_public_id),
             _canonical_history(request.question, answer_text),
         )
 
@@ -593,7 +739,11 @@ class KnowledgeAgent:
         execution: AgentExecution,
         deps: AgentDeps,
     ) -> AgentExecution:
-        if deps.actions.outcome is None and deps.actions.read_action_results:
+        if (
+            execution.answer.status != "failed"
+            and deps.actions.outcome is None
+            and deps.actions.read_action_results
+        ):
             execution.answer.action_results = list(deps.actions.read_action_results)
         return execution
 
@@ -612,12 +762,11 @@ class KnowledgeAgent:
         partial_text = "\n".join(deps.actions.read_action_texts)
         partial_text += "\n" + BOUNDED_UNAVAILABLE_REMAINDER
         return AgentExecution(
-            AgentAnswer(
-                status="ok",
+            ResponseEnvelope.canonical(
                 text=partial_text,
-                action_results=list(deps.actions.read_action_results),
-                thread_id=request.thread_public_id,
-            ),
+                template_key="partial_read",
+                action_results=deps.actions.read_action_results,
+            ).project(thread_id=request.thread_public_id),
             _canonical_history(request.question, partial_text),
         )
 
@@ -628,14 +777,15 @@ class KnowledgeAgent:
         diagnostics: RequestDiagnostics,
     ) -> AgentExecution:
         diagnostics.event("action_validated", error_code=outcome.error_code)
+        envelope = ResponseEnvelope.action(
+            status=outcome.status,
+            text=outcome.text,
+            action_code=outcome.error_code or "action_result",
+            results=outcome.results,
+            error_code=outcome.error_code,
+        )
         return AgentExecution(
-            AgentAnswer(
-                status=outcome.status,
-                text=outcome.text,
-                action_results=list(outcome.results),
-                thread_id=request.thread_public_id,
-                error_code=outcome.error_code,
-            ),
+            envelope.project(thread_id=request.thread_public_id),
             _canonical_history(request.question, outcome.text)
             if outcome.history_visible
             else [],
@@ -653,14 +803,15 @@ class KnowledgeAgent:
         except ActionInputMismatch:
             outcome = actions.finalize_input_mismatch()
         diagnostics.event("action_validated", error_code=outcome.error_code)
+        envelope = ResponseEnvelope.action(
+            status=outcome.status,
+            text=outcome.text,
+            action_code=outcome.error_code or "save_confirmation_required",
+            results=outcome.results,
+            error_code=outcome.error_code,
+        )
         return AgentExecution(
-            AgentAnswer(
-                status=outcome.status,
-                text=outcome.text,
-                action_results=list(outcome.results),
-                thread_id=request.thread_public_id,
-                error_code=outcome.error_code,
-            ),
+            envelope.project(thread_id=request.thread_public_id),
             [],
         )
 
@@ -686,13 +837,9 @@ class KnowledgeAgent:
     ) -> AgentExecution:
         if log_event:
             diagnostics.event("agent_failed", error_code=code, agent_phase="retrieval")
+        envelope = ResponseEnvelope.failed(text=text, error_code=code)
         return AgentExecution(
-            AgentAnswer(
-                status="failed",
-                text=text,
-                thread_id=request.thread_public_id,
-                error_code=code,
-            ),
+            envelope.project(thread_id=request.thread_public_id),
             [],
         )
 

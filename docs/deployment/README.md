@@ -192,8 +192,8 @@ cd ..
 | `AGENT_API_KEY` | 视 provider | 模型凭据 |
 | `AGENT_BASE_URL` | OpenAI-compatible 时 | 以 `/v1` 结尾的兼容接口根地址 |
 | `AGENT_TOOL_TIMEOUT_SECONDS` | 是 | 单次 Agent tool 上限；必须小于外层 `AGENT_TIMEOUT_SECONDS` |
-| `AGENT_OUTPUT_TOKEN_LIMIT` | 是 | primary Turn Agent 与同证据 Composer repair 各自的模型输出安全上限；不要通过简单提高该值修复检索收敛 |
-| `AGENT_COMPOSER_MAX_TOKENS` | 是 | Composer repair 请求真正发给 provider 的生成上限，默认 `1000`；每轮最多执行一次、没有内部 output retry，失败直接返回可信证据 fallback。DeepSeek Composer 同时关闭 thinking |
+| `AGENT_OUTPUT_TOKEN_LIMIT` | 是 | primary Turn Agent 与同证据 answer Agent 各阶段的模型输出安全上限；不要通过简单提高该值修复检索收敛 |
+| `AGENT_COMPOSER_MAX_TOKENS` | 是 | answer Agent 每次请求真正发给 provider 的生成上限，默认 `1000`；回答恢复最多三次总尝试、没有内部 output retry，三次均失败返回 `answer_unavailable`，不返回机械证据列表。DeepSeek answer Agent 同时关闭 thinking |
 | `BROKER_PUBLISH_TIMEOUT_SECONDS` | 是 | channel 保存消息发布总预算；运行时会压到 Agent tool 上限以内 |
 | `BROKER_PUBLISH_MAX_RETRIES` | 是 | broker 发布的有限 retry 次数；不影响 worker ingestion retry |
 | `INGEST_MAX_ACTIVE_PER_USER` / `INGEST_MAX_ACTIVE_GLOBAL` | 是 | 同时执行的 per-user 与全局入库上限；默认 10 / 100 |

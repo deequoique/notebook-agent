@@ -1,0 +1,32 @@
+{
+  "id": "trusted-response-boundary",
+  "name": "trusted-response-boundary",
+  "title": "统一 Agent 可信响应与渠道动作边界",
+  "description": "基于已完成人工评测，统一 grounded、no-evidence、server-canonical 与 action 输出的 section 所有权和渲染合同，并让 channel-save 在同一可信响应边界上实现能力说明与真实 pending 确认。",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": "backend+evaluation",
+  "package": "backend",
+  "priority": "P2",
+  "creator": "lane",
+  "assignee": "lane",
+  "createdAt": "2026-08-19",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "08-18-channel-save-link-routing"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "source_benchmark": "08-18-agent-quality-benchmark",
+    "human_review_run": "20260819T072852Z-7e8a6e54",
+    "planning_pivot_date": "2026-08-19"
+  }
+}

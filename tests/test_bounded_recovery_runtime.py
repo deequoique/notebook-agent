@@ -232,7 +232,7 @@ async def test_empty_search_same_query_does_not_spend_reformulation_then_changed
 
 
 @pytest.mark.asyncio
-async def test_provider_failure_has_no_agent_retry_and_uses_evidence_fallback():
+async def test_provider_failure_uses_three_answer_attempts_without_fallback():
     citation = Citation(
         item_id=1,
         segment_id=10,
@@ -267,9 +267,11 @@ async def test_provider_failure_has_no_agent_retry_and_uses_evidence_fallback():
         FunctionModel(model), _settings(), lambda _request: services
     ).run(_request())
 
-    assert provider_calls == 2
-    assert result.answer.citations == [citation]
-    assert result.answer.text.startswith("自动总结未完成")
+    assert provider_calls == 5
+    assert result.answer.status == "failed"
+    assert result.answer.error_code == "answer_unavailable"
+    assert result.answer.citations == []
+    assert "自动总结未完成" not in result.answer.text
 
 
 @pytest.mark.asyncio
@@ -290,7 +292,10 @@ async def test_answer_repair_is_one_provider_attempt_after_invalid_marker():
             parts=[
                 TextPart(
                     json.dumps(
-                        {"sections": [{"text": "修复", "citation_ids": [10]}]}
+                        {
+                            "kind": "grounded",
+                            "sections": [{"text": "修复", "citation_ids": [10]}],
+                        }
                     )
                 )
             ]
@@ -309,7 +314,7 @@ async def test_answer_repair_is_one_provider_attempt_after_invalid_marker():
 
 
 @pytest.mark.asyncio
-async def test_exact_retry_and_answer_repair_share_two_action_ceiling(caplog):
+async def test_exact_retry_and_answer_recovery_do_not_share_action_ceiling(caplog):
     citation = Citation(
         item_id=1,
         segment_id=10,
@@ -326,7 +331,10 @@ async def test_exact_retry_and_answer_repair_share_two_action_ceiling(caplog):
             parts=[
                 TextPart(
                     json.dumps(
-                        {"sections": [{"text": "修复", "citation_ids": [10]}]}
+                        {
+                            "kind": "grounded",
+                            "sections": [{"text": "修复", "citation_ids": [10]}],
+                        }
                     )
                 )
             ]
@@ -352,13 +360,12 @@ async def test_exact_retry_and_answer_repair_share_two_action_ceiling(caplog):
     actions = [entry for entry in recovery if entry.get("recovery_action")]
     assert [entry.get("recovery_action") for entry in actions] == [
         "retry_same_read",
-        "repair_answer",
     ]
-    assert [entry.get("recovery_count") for entry in actions] == [2, 1]
+    assert [entry.get("recovery_count") for entry in actions] == [2]
 
 
 @pytest.mark.asyncio
-async def test_invalid_answer_repair_runs_once_then_uses_trusted_fallback():
+async def test_invalid_answer_recovery_exhausts_three_attempts_without_fallback():
     citation = Citation(
         item_id=1,
         segment_id=10,
@@ -375,7 +382,10 @@ async def test_invalid_answer_repair_runs_once_then_uses_trusted_fallback():
             parts=[
                 TextPart(
                     json.dumps(
-                        {"sections": [{"text": "坏修复", "citation_ids": [999]}]}
+                        {
+                            "kind": "grounded",
+                            "sections": [{"text": "坏修复", "citation_ids": [999]}],
+                        }
                     )
                 )
             ]
@@ -388,10 +398,11 @@ async def test_invalid_answer_repair_runs_once_then_uses_trusted_fallback():
         composer_model=FunctionModel(invalid_repair),
     ).run(_request())
 
-    assert result.answer.status == "ok"
-    assert result.answer.text.startswith("自动总结未完成")
-    assert result.answer.citations == [citation]
-    assert repair_calls == 1
+    assert result.answer.status == "failed"
+    assert result.answer.error_code == "answer_unavailable"
+    assert "自动总结未完成" not in result.answer.text
+    assert result.answer.citations == []
+    assert repair_calls == 3
 
 
 @pytest.mark.asyncio

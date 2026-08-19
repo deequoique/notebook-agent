@@ -14,6 +14,7 @@
 - [x] Define one canonical `capture-transcript.v1` raw schema/parser that yields existing `Cue`/metadata structures; keep legacy JSON3 parsing intact.
 - [x] Add centralized platform canonicalization and timestamp-link interfaces for YouTube and `ntu_kaltura`.
 - [x] Add configuration for pairing/grant TTLs, exact allowed extension origins, and request-body limits; validate unsafe/wildcard values at startup.
+- [x] Permit `chrome-extension://*` only for a loopback-bound development Web server while preserving exact production Origin validation.
 - [x] Review gate: threat-model page-world messages, pairing theft/replay, token storage, CORS, body decompression, signed-URL leakage, tenant confusion, and idempotency conflicts before migrations.
 
 ## Phase 2 — Database and extension authorization
@@ -34,7 +35,7 @@
 - [ ] Persist deterministic raw-object cleanup intent before object I/O, store canonical transcript JSON, and add retry/repair behavior for crash windows without holding a database transaction across storage or broker calls.
 - [x] Route captured dispatches through the existing worker: bounded read, revalidation, metadata application, `needs_asr` for caption-unavailable, chunking, embedding, completion outbox, and deletion-race handling. Never call a remote connector for a ready capture.
 - [x] Make transcript reading format-aware and preserve existing tenant-prefix, size, cursor, and legacy JSON3 behavior.
-- [ ] Test malformed/oversized/timing-invalid payloads, body-hash conflict, duplicate submit, quota exhaustion, object-store and broker failures, repair, deletion/restore races, capture-to-ready, capture-to-needs_asr, and zero transcript bytes in broker payloads.
+- [ ] Test malformed/oversized/timing-invalid payloads, body-hash conflict, duplicate submit, quota exhaustion, object-store and broker failures, repair, deletion/restore races, capture-to-ready, capture-to-needs_asr, and zero transcript bytes in broker payloads. (Broker-budget isolation from slow database admission is covered.)
 - [x] Review point: without an installed/paired extension, all pre-existing ingestion and transcript paths behave identically.
 
 ## Phase 4 — Platform-aware backend and Web product
@@ -43,6 +44,7 @@
 - [x] Centralize timestamp/source projections for transcript blocks and Agent citations; verify YouTube timestamps and Kaltura canonical/deep links.
 - [x] Update capabilities, Add Videos, item details, lifecycle/action copy, and `youtube_rate_limited` recovery to direct paired users to browser capture.
 - [x] Add the same-origin pairing approval and paired-device/revocation UI using generated OpenAPI types and existing query/client/session rules.
+- [x] Preserve a validated pending approval destination across Web login; make public entry points download the extension; distinguish approval from completed connection and expose actionable pairing errors.
 - [x] Preserve distinct loading, error, unsupported, permission, unpaired, processing, `needs_asr`, and successful states with concise Chinese copy and accessible mobile controls.
 - [ ] Regenerate OpenAPI JSON and TypeScript together; test CSP, no private IDs, CSRF, cache teardown, server-derived actions, and 390×844 interaction. (Contracts/tests complete; real 390×844 browser smoke remains.)
 
@@ -52,7 +54,7 @@
 - [x] Implement service-worker ownership of pairing verifier/Bearer, local-only storage, disconnect, capture idempotency, submission/status, safe retries, and version negotiation.
 - [ ] Implement a typed adapter dispatcher and nonce-bound page bridge with strict platform/host/message validation.
 - [ ] Implement YouTube metadata/caption selection and cue normalization against sanitized fixtures; submit `unavailable` when no usable captions exist.
-- [ ] Implement NTULearn embedded/direct Kaltura discovery and supported caption parsing against sanitized fixtures; consume and discard page-scoped signed authorization locally.
+- [x] Implement NTULearn embedded/direct Kaltura discovery and supported caption parsing against sanitized fixtures; consume and discard page-scoped signed authorization locally.
 - [x] Implement the single extension action/popup with permission, pairing, progress, result, `needs_asr`, adapter-change, and recovery states.
 - [x] Prove the packaged artifact contains no environment secrets, broad host wildcard, remote executable code, third-party session material, transcript fixtures, or source maps that expose secrets.
 - [ ] Run an unpacked-extension smoke on controlled fixture pages before live canaries.

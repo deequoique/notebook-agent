@@ -21,7 +21,7 @@ from app.agent.answer_validation import (
     validate_natural_answer,
 )
 from app.agent.actions import AgentActionServices
-from app.agent.context import ContextItemRef, TurnContext
+from app.agent.context import ContextCitationRef, ContextItemRef, TurnContext
 from app.agent.management import SavedItem
 from app.agent.runtime import KnowledgeAgent, build_agent
 from app.agent.types import AgentRequest, Citation
@@ -209,7 +209,10 @@ async def test_flag_on_forged_marker_uses_same_evidence_composer_without_retriev
             parts=[
                 TextPart(
                     json.dumps(
-                        {"sections": [{"text": "safe", "citation_ids": [3]}]}
+                        {
+                            "kind": "grounded",
+                            "sections": [{"text": "safe", "citation_ids": [3]}],
+                        }
                     )
                 )
             ]
@@ -540,6 +543,78 @@ async def test_flag_on_list_then_scoped_search_uses_only_observed_second_item():
 
 
 @pytest.mark.asyncio
+async def test_current_run_search_citation_can_scope_follow_up_search():
+    global_citation = Citation(
+        item_id=12,
+        segment_id=120,
+        title="Second",
+        excerpt="global evidence",
+        url="https://youtu.be/video0000012",
+    )
+    scoped_citation = Citation(
+        item_id=12,
+        segment_id=121,
+        title="Second",
+        excerpt="refined evidence",
+        url="https://youtu.be/video0000012",
+    )
+
+    class SearchThenScopedServices(Services):
+        def __init__(self):
+            super().__init__()
+            self.item_ids: list[int | None] = []
+
+        def search_segments(self, _query, *, limit=6, item_id=None):
+            self.calls.append("search_segments")
+            self.item_ids.append(item_id)
+            return [scoped_citation] if item_id == 12 else [global_citation]
+
+    services = SearchThenScopedServices()
+
+    def model(messages, _info):
+        returns = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        if not returns:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "search_segments",
+                        json.dumps({"query": "global"}),
+                        tool_call_id="global-search",
+                    )
+                ]
+            )
+        if len(returns) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "search_segments",
+                        json.dumps({"query": "refined", "item_id": 12}),
+                        tool_call_id="scoped-search",
+                    )
+                ]
+            )
+        return ModelResponse(parts=[TextPart("第二项总结 [S121]")])
+
+    result = await KnowledgeAgent(
+        FunctionModel(model),
+        autonomy_settings(),
+        lambda _request: services,
+    ).run(request("先找相关内容，再限定到第二项"))
+
+    assert result.answer.status == "ok"
+    assert result.answer.error_code is None
+    assert result.answer.citations == [scoped_citation]
+    assert services.item_ids == [None, 12]
+    assert services.calls == ["search_segments", "search_segments"]
+
+
+@pytest.mark.asyncio
 async def test_prior_inventory_context_can_scope_search_and_use_current_evidence():
     citation = Citation(
         item_id=12,
@@ -638,6 +713,54 @@ async def test_prior_inventory_context_with_empty_backend_returns_no_evidence():
     assert result.answer.status == "not_found"
     assert result.answer.error_code == "no_evidence"
     assert result.answer.citations == []
+
+
+@pytest.mark.asyncio
+async def test_prior_source_context_cannot_authorize_scoped_search():
+    services = Services([])
+
+    def model(messages, _info):
+        has_return = any(
+            isinstance(part, ToolReturnPart)
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+        if has_return:
+            return ModelResponse(parts=[TextPart("无法继续。")])
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "search_segments",
+                    json.dumps({"query": "summary", "item_id": 12}),
+                    tool_call_id="search-1",
+                )
+            ]
+        )
+
+    result = await KnowledgeAgent(
+        FunctionModel(model),
+        autonomy_settings(),
+        lambda _request: services,
+    ).run(
+        replace(
+            request("总结此前来源"),
+            context=TurnContext(
+                recent_sources=(
+                    ContextCitationRef(
+                        item_id=12,
+                        segment_id=120,
+                        title="Prior source",
+                    ),
+                ),
+                history=({"item_id": 12},),
+            ),
+        )
+    )
+
+    assert result.answer.status == "failed"
+    assert result.answer.error_code == "item_scope_required"
+    assert services.calls == []
 
 
 @pytest.mark.asyncio

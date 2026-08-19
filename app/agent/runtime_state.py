@@ -62,6 +62,10 @@ class AgentDeps:
     services: KnowledgeServices
     actions: AgentActionRuntime
     search_calls: int = 0
+    # A search reservation is not evidence of a successful read.  This flag
+    # is set only after the backend returned (including an empty result), and
+    # gates the server-owned no-evidence disposition.
+    successful_searches: int = 0
     retrieval_calls: int = 0
     expansion_calls: int = 0
     tool_calls: int = 0
@@ -86,6 +90,7 @@ class AgentDeps:
     pending_read_failures: dict[str, str] = field(default_factory=dict)
     last_empty_search_fingerprint: str | None = None
     read_recovery_exhausted: bool = False
+    no_relevant_evidence_requested: bool = False
     todo_used: bool = False
     _tool_lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -120,6 +125,33 @@ class AgentDeps:
                 continue
             self.citations[citation.segment_id] = citation
 
+    def can_scope_search_to_item(self, item_id: int | None) -> bool:
+        """Return whether a scoped search item is trusted for this run.
+
+        Item identifiers are references only: the knowledge service still
+        repeats tenant, visibility, readiness, and exact-reference checks.
+        The runtime allow-list combines current management observations,
+        validated prior inventory context, and citations recorded during this
+        run.  Prior source/history focus is deliberately excluded.
+        """
+
+        if isinstance(item_id, bool) or not isinstance(item_id, int) or item_id <= 0:
+            return False
+        citation_observed = any(
+            citation.item_id == item_id for citation in self.citations.values()
+        )
+        if self.reference_scope:
+            # An exact current-message reference is the strict upper bound.
+            # Inventory observations and prior context do not carry the
+            # platform reference needed to prove that they match this scope;
+            # only a current-run Citation accepted by record() does.
+            return citation_observed
+        if self.actions.is_observed_item(item_id):
+            return True
+        if item_id in self.context.inventory_item_ids:
+            return True
+        return citation_observed
+
     def tool_event(
         self,
         name: str,
@@ -148,6 +180,12 @@ class ComposerDeps:
     excerpt_chars: int = COMPOSER_EVIDENCE_EXCERPT_CHARS
     diagnostics: RequestDiagnostics | None = None
     invalid_draft_count: int = 0
+    # Fixed allow-listed category from the previous answer attempt. It is
+    # rendered as correction guidance only; no prior draft or model payload is
+    # retained between attempts.
+    last_failure_reason: str | None = None
+    required_item_ids: frozenset[int] = frozenset()
+    max_segments: int = COMPRESSED_EVIDENCE_LIMIT
 
 
 @dataclass(frozen=True)

@@ -16,10 +16,21 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
 
+from app.agent.actions import AgentActionServices
 from app.agent.types import AgentAnswer, Citation
-from app.agent.management import BatchItemOperationResult, ItemOperationResult
+from app.agent.management import (
+    BatchItemOperationResult,
+    ItemOperationResult,
+    SavedItemPage,
+)
 from app.agent.runtime import KnowledgeAgent
 from app.channels.service import ChannelService
 from app.channels.types import ChannelEnvelope
@@ -335,16 +346,16 @@ class _FakeChannelService:
 
 class _ControlledKnowledgeServices:
     def __init__(self, citation: Citation):
-        self.citation = citation
+        self.citations = list(citation) if isinstance(citation, (list, tuple)) else [citation]
         self.calls = []
 
     def search_segments(self, query, *, limit=10):
         self.calls.append(("search_segments", query))
-        return [self.citation]
+        return self.citations
 
     def get_neighbors(self, segment_id, *, radius=1):
         self.calls.append(("get_neighbors", segment_id))
-        return [self.citation]
+        return self.citations
 
     def get_item(self, item_id):
         self.calls.append(("get_item", item_id))
@@ -352,7 +363,7 @@ class _ControlledKnowledgeServices:
 
     def open_at(self, segment_id):
         self.calls.append(("open_at", segment_id))
-        return self.citation
+        return self.citations[0]
 
 
 def _resolved(scope="read"):
@@ -404,15 +415,18 @@ async def test_mcp_natural_question_reaches_real_channel_and_knowledge_agent():
             "resolve_or_register",
             lambda _db, _envelope: tenant,
         )
-        citation = Citation(
-            item_id=3,
-            segment_id=8,
-            title="source",
-            excerpt="grounded evidence",
-            url="https://example.test/source",
-            start_sec=4,
-        )
-        services = _ControlledKnowledgeServices(citation)
+        citations = [
+            Citation(
+                item_id=3,
+                segment_id=segment_id,
+                title="source",
+                excerpt="grounded evidence",
+                url=f"https://example.test/source?t={segment_id}",
+                start_sec=segment_id,
+            )
+            for segment_id in range(1, 10)
+        ]
+        services = _ControlledKnowledgeServices(citations)
         planner_calls = []
 
         def planner(_messages, info):
@@ -428,7 +442,14 @@ async def test_mcp_natural_question_reaches_real_channel_and_knowledge_agent():
                         )
                     ]
                 )
-            return ModelResponse(parts=[TextPart("planner complete")])
+            return ModelResponse(
+                parts=[
+                    TextPart(
+                        "planner complete "
+                        + " ".join(f"[S{segment_id}]" for segment_id in range(1, 10))
+                    )
+                ]
+            )
 
         settings = replace(
             Settings(),
@@ -440,7 +461,12 @@ async def test_mcp_natural_question_reaches_real_channel_and_knowledge_agent():
             lambda _request: services,
             composer_model=TestModel(
                 custom_output_text=json.dumps(
-                    {"sections": [{"text": "grounded", "citation_ids": [8]}]}
+                    {
+                        "kind": "grounded",
+                        "sections": [
+                            {"text": "grounded", "citation_ids": list(range(1, 9))}
+                        ]
+                    }
                 )
             ),
         )
@@ -468,7 +494,11 @@ async def test_mcp_natural_question_reaches_real_channel_and_knowledge_agent():
                 )
                 assert natural.is_error is False
                 assert natural.structured_content["status"] == "ok"
-                assert natural.structured_content["citations"][0]["segment_id"] == 8
+                assert len(natural.structured_content["citations"]) == 8
+                assert all(
+                    value["segment_id"] <= 8
+                    for value in natural.structured_content["citations"]
+                )
                 assert services.calls == [("search_segments", "What is in my notes?")]
                 assert planner_calls
                 calls_before_command = len(planner_calls)
@@ -487,6 +517,172 @@ async def test_mcp_natural_question_reaches_real_channel_and_knowledge_agent():
                 assert invalid.structured_content is None
                 assert len(planner_calls) == calls_before_command
             await server_task
+        with factory() as db:
+            turn = db.scalar(
+                select(ConversationTurn).where(
+                    ConversationTurn.answer_status == "ok"
+                )
+            )
+            assert turn is not None
+            persisted_ids = [source["segment_id"] for source in turn.sources]
+            projected_ids = [
+                source["segment_id"]
+                for source in natural.structured_content["citations"]
+            ]
+            assert persisted_ids == projected_ids == list(range(1, 9))
+            assert all(
+                f"[S{segment_id}]" in turn.assistant_text
+                for segment_id in persisted_ids
+            )
+    finally:
+        monkeypatch.undo()
+        engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_failed_answer_recovery_after_composable_read_is_not_persisted():
+    engine, factory = _sqlite_channel_factory()
+    try:
+        import app.channels.service as channel_module
+
+        tenant = TenantContext(1, 2, "mcp", "mcp", "grant-principal")
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(
+            channel_module,
+            "resolve_or_register",
+            lambda _db, _envelope: tenant,
+        )
+
+        citation = Citation(
+            item_id=3,
+            segment_id=8,
+            title="source",
+            excerpt="grounded evidence",
+            url="https://example.test/source",
+        )
+
+        class Services:
+            def __init__(self):
+                self.calls = []
+
+            def search_segments(self, query, *, limit=6, item_id=None):
+                self.calls.append(("search_segments", query, item_id))
+                return [citation]
+
+            def get_neighbors(self, segment_id, *, radius=1):
+                self.calls.append(("get_neighbors", segment_id, radius))
+                return [citation]
+
+            def get_item(self, item_id):
+                return None
+
+            def open_at(self, segment_id):
+                return citation
+
+        class Management:
+            def list_items(self, _tenant, **_filters):
+                return SavedItemPage(items=[])
+
+        class Pending:
+            def inspect_save(self, *_args):
+                from app.channels.pending_actions import PendingSaveSnapshot
+
+                return PendingSaveSnapshot(active=False)
+
+            def inspect_delete(self, *_args):
+                from app.channels.pending_actions import PendingDeleteSnapshot
+
+                return PendingDeleteSnapshot(active=False)
+
+        services = Services()
+        composer_calls = 0
+
+        def primary(messages, _info):
+            returns = [
+                part
+                for message in messages
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+                if isinstance(part, ToolReturnPart)
+            ]
+            if not returns:
+                return ModelResponse(
+                    parts=[ToolCallPart("list_saved_items", "{}", tool_call_id="list")]
+                )
+            if len(returns) == 1:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            "search_segments",
+                            json.dumps({"query": "主题"}),
+                            tool_call_id="search",
+                        )
+                    ]
+                )
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "get_neighbors",
+                        json.dumps({"segment_id": citation.segment_id}),
+                        tool_call_id="neighbors",
+                    )
+                ]
+            )
+
+        def invalid_composer(_messages, _info):
+            nonlocal composer_calls
+            composer_calls += 1
+            return ModelResponse(
+                parts=[
+                    TextPart(
+                        json.dumps(
+                            {
+                                "kind": "grounded",
+                                "sections": [
+                                    {"text": "不可信草稿", "citation_ids": [999]}
+                                ]
+                            }
+                        )
+                    )
+                ]
+            )
+
+        settings = replace(
+            Settings(),
+            agent_timeout_seconds=2,
+            agent_tool_calls_limit=2,
+        )
+        agent = KnowledgeAgent(
+            FunctionModel(primary),
+            settings,
+            lambda _request: services,
+            action_factory=lambda _request: AgentActionServices(
+                submission=None,
+                pending=Pending(),
+                management=Management(),
+            ),
+            composer_model=FunctionModel(invalid_composer),
+        )
+        channel = ChannelService(factory, agent, settings)
+        answer = await channel.handle(
+            ChannelEnvelope(
+                channel="mcp",
+                account_id="mcp",
+                external_user_id="grant-principal",
+                conversation_id="recovery",
+                message_id="message-recovery",
+                text="列出收藏并总结",
+                request_id="a" * 32,
+            )
+        )
+
+        assert answer.status == "failed"
+        assert answer.error_code == "answer_unavailable"
+        assert answer.action_results == []
+        assert composer_calls == 3
+        assert services.calls == [("search_segments", "主题", None)]
+        with factory() as db:
+            assert db.scalar(select(ConversationTurn)) is None
     finally:
         monkeypatch.undo()
         engine.dispose()

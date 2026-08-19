@@ -63,7 +63,7 @@ describe("ShowcasePage", () => {
     expect(screen.getByRole("link", { name: /进入资料库/ })).toHaveAttribute("href", "/login");
     expect(screen.getByRole("link", { name: "下载浏览器伴侣" })).toHaveAttribute(
       "href",
-      "/assets/notebook-agent-browser-companion-local-0.1.3.zip",
+      "/assets/notebook-agent-browser-companion-production-0.1.3.zip",
     );
     expect(screen.getByLabelText("从视频到可追溯答案的处理路径")).toBeInTheDocument();
     expect(screen.queryByText("来源可核对")).not.toBeInTheDocument();

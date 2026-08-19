@@ -1,10 +1,9 @@
-"""Tool-free bounded answer repair, evidence rendering, and fallback."""
+"""Tool-free bounded answer recovery and evidence rendering."""
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterable
-from typing import Literal
 
 from pydantic_ai import (
     Agent,
@@ -15,6 +14,7 @@ from pydantic_ai import (
 from pydantic_ai.exceptions import (
     ModelHTTPError,
     ModelRetry,
+    UnexpectedModelBehavior,
     UsageLimitExceeded,
 )
 from pydantic_ai.messages import (
@@ -27,26 +27,150 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import Model
 from pydantic_ai.usage import RunUsage
 
-from app.agent.answer_validation import NaturalAnswerValidationError
-from app.agent.autonomy import ErrorEnvelope
+from app.agent.answer_validation import (
+    NaturalAnswerValidationError,
+    validate_natural_answer,
+)
+from app.agent.provider import composer_model_settings
 from app.agent.runtime_state import (
     COMPRESSED_EVIDENCE_LIMIT,
     ComposerDeps,
     MAX_SOURCE_ITEMS,
     AgentDeps,
     AgentExecution,
+    _citation_matches_scope,
 )
-from app.agent.types import AgentAnswer, AgentRequest, AnswerDraft, Citation
+from app.agent.response import GroundedResponseSection, ResponseEnvelope
+from app.agent.types import (
+    AgentRequest,
+    AnswerDraft,
+    GroundedDraft,
+    NoRelevantEvidenceDraft,
+    Citation,
+)
 from app.config import Settings
 from app.diagnostics import RequestDiagnostics, classify_usage_limit
-from app.agent.provider import composer_model_settings
 
 
-COMPOSER_INSTRUCTIONS = """
+_COMPOSER_JSON_EXAMPLE = (
+    '{"kind":"grounded","sections":[{"text":"简洁回答","citation_ids":[123]}]}'
+)
+_COMPOSER_GLOBAL_CONSTRAINTS = (
+    "完整约束：kind 只能是 grounded 或 no_relevant_evidence；grounded 的 sections 最多 8 个；"
+    "只选择与问题相关的视频；每个选中的视频至少引用一个 segment，"
+    "更重要的视频可以引用多个 segment；每个 section 必须有非空 text 和至少一个 citation_id；"
+    "所有 section citation_ids 按 section 顺序合并后就是最终选择（最多 8 个），不得重复；"
+    "所有 section 引用都必须是可用候选 ID；全部引用最多来自 5 个视频；"
+    "只能使用可用候选证据中的 ID；section text 不得包含 URL、来源块或 [S…] 标记；"
+    "当前消息显式 URL 范围内已有证据的每个视频都必须至少被引用一次；"
+    "如果没有任何候选支持问题，必须返回 {\"kind\":\"no_relevant_evidence\"}，"
+    "不要勉强引用无关片段。"
+)
+_COMPOSER_SCHEMA_GUIDANCE = (
+    "只返回一个符合 schema 的 JSON。结构示例（123 仅为示例，必须替换为可用候选 ID）："
+    f"{_COMPOSER_JSON_EXAMPLE}\n{_COMPOSER_GLOBAL_CONSTRAINTS}"
+)
+
+COMPOSER_INSTRUCTIONS = f"""
 你是私有知识库的回答编辑器。只能依据服务器提供的证据写回答，不能使用模型记忆补充事实。
 输出结构化 sections；每个 section 写简洁中文文本，并列出支持该 section 的 segment ID。
-不要输出 URL、视频标题、[S…] 标记、章节标题或服务器未提供的事实。最多引用五个不同视频。
+回答只选择与问题相关的视频；每个选中的视频至少引用一个 segment。
+{_COMPOSER_SCHEMA_GUIDANCE}
 """.strip()
+
+
+_COMPOSER_FAILURE_GUIDANCE: dict[str, str] = {
+    "invalid_structure": (
+        "校验类别 invalid_structure：上一轮没有返回可解析的 AnswerDraft。"
+        f"本次请修正结构并重试。{_COMPOSER_SCHEMA_GUIDANCE}"
+    ),
+    "unsafe_text": (
+        "校验类别 unsafe_text：section 的 text 不得包含 URL、来源块或 [S…]"
+        "标记；引用只能放在 citation_ids 中。"
+    ),
+    "missing_citation": (
+        "校验类别 missing_citation：每个 section 都必须至少引用一个可用"
+        "证据 segment。"
+    ),
+    "unknown_citation": (
+        "校验类别 unknown_citation：section citation_ids 只能选择可用证据中列出的"
+        "segment ID，不要猜测、编造或引用其他轮次的 ID。"
+    ),
+    # Kept as a safe compatibility category for older callers; new drafts
+    # use the more precise unknown/duplicate/scope categories above.
+    "invalid_citation": (
+        "校验类别 invalid_citation：section citation_ids 只能选择可用证据中列出的"
+        "segment ID，不要猜测、编造或引用其他轮次的 ID。"
+    ),
+    "duplicate_citation": (
+        "校验类别 duplicate_citation：每个 segment 只能在一个 section 中引用一次，"
+        "不要重复列出相同 ID。"
+    ),
+    "too_many_segments": (
+        "校验类别 too_many_segments：所有 section 合计去重后最多选择 8 个"
+        "segment。"
+    ),
+    "too_many_items": (
+        "校验类别 too_many_items：所有引用合计最多来自 5 个视频。"
+    ),
+    "missing_scope_item": (
+        "校验类别 missing_scope_item：当前消息明确指定且已有证据的每个视频"
+        "都必须至少选择一个 segment。"
+    ),
+    "provider_failure": (
+        "校验类别 provider_failure：上一轮没有得到可交付的结构化结果。"
+        "请重新直接返回符合 schema 的 JSON。"
+    ),
+    "no_evidence_unavailable": (
+        "校验类别 no_evidence_unavailable：本轮存在未完成的读取，不能下结论说没有证据。"
+        "请只返回有明确支持的 grounded section。"
+    ),
+}
+
+
+def _composer_failure_guidance(reason: str | None) -> str:
+    """Return fixed correction text for one allow-listed prior failure reason."""
+
+    return _COMPOSER_FAILURE_GUIDANCE.get(reason or "", "")
+
+
+def _draft_failure_reason(
+    ctx: RunContext[ComposerDeps],
+    draft: AnswerDraft,
+) -> str | None:
+    """Classify a rejected draft without retaining any model-authored content."""
+
+    decision = draft.decision
+    if isinstance(decision, NoRelevantEvidenceDraft):
+        return None
+
+    cited_ids = [
+        segment_id
+        for section in decision.sections
+        for segment_id in section.citation_ids
+    ]
+    selected_ids = set(cited_ids)
+    try:
+        for section in draft.sections:
+            validate_natural_answer(section.text)
+    except NaturalAnswerValidationError:
+        return "unsafe_text"
+
+    if not selected_ids:
+        return "missing_citation"
+    allowed = set(ctx.deps.citations)
+    if any(segment_id not in allowed for segment_id in cited_ids):
+        return "unknown_citation"
+    if len(cited_ids) != len(selected_ids):
+        return "duplicate_citation"
+    if len(selected_ids) > ctx.deps.max_segments:
+        return "too_many_segments"
+    item_ids = {ctx.deps.citations[segment_id].item_id for segment_id in cited_ids}
+    if len(item_ids) > MAX_SOURCE_ITEMS:
+        return "too_many_items"
+    if not ctx.deps.required_item_ids.issubset(item_ids):
+        return "missing_scope_item"
+    return None
 
 
 def build_composer(
@@ -68,53 +192,36 @@ def build_composer(
 
     @composer.instructions
     def bounded_evidence_instruction(ctx: RunContext[ComposerDeps]) -> str:
-        return _render_composer_evidence(
+        evidence = _render_composer_evidence(
             ctx.deps.citations.values(),
             excerpt_chars=ctx.deps.excerpt_chars,
         )
+        guidance = _composer_failure_guidance(ctx.deps.last_failure_reason)
+        return f"{guidance}\n\n{evidence}" if guidance else evidence
 
     @composer.output_validator
-    def validate_draft(ctx: RunContext[ComposerDeps], draft: AnswerDraft) -> AnswerDraft:
-        cited_ids = {
-            segment_id
-            for section in draft.sections
-            for segment_id in section.citation_ids
-        }
-        allowed = set(ctx.deps.citations)
-        item_ids = {
-            ctx.deps.citations[segment_id].item_id
-            for segment_id in cited_ids
-            if segment_id in ctx.deps.citations
-        }
-        if cited_ids and cited_ids.issubset(allowed) and len(item_ids) <= MAX_SOURCE_ITEMS:
+    def validate_draft(
+        ctx: RunContext[ComposerDeps],
+        draft: AnswerDraft,
+    ) -> AnswerDraft:
+        failure_reason = _draft_failure_reason(ctx, draft)
+        if failure_reason is None:
             return draft
+        ctx.deps.last_failure_reason = failure_reason
         ctx.deps.invalid_draft_count += 1
         if ctx.deps.diagnostics is not None:
             ctx.deps.diagnostics.event(
                 "citation_validated",
                 error_code="answer_unavailable",
                 retry_count=ctx.deps.invalid_draft_count,
+                failure_reason=failure_reason,
                 agent_phase="answer",
             )
         raise ModelRetry(
-            "Every section must cite only an allowed segment ID, and all sections together may cite no more than five videos."
+            "回答必须只引用可用证据，并满足视频、片段和当前问题范围限制。"
         )
 
     return composer
-
-
-def _limit_citations_by_item(citations: list[Citation]) -> list[Citation]:
-    """Project deterministic top-five item evidence in retrieval order."""
-
-    selected: list[Citation] = []
-    item_ids: set[int] = set()
-    for citation in citations:
-        if citation.item_id not in item_ids:
-            if len(item_ids) >= MAX_SOURCE_ITEMS:
-                continue
-            item_ids.add(citation.item_id)
-        selected.append(citation)
-    return selected
 
 
 def _render_composer_evidence(
@@ -162,8 +269,14 @@ def _compressed_citations(citations: list[Citation]) -> list[Citation]:
     return selected
 
 
-def _render_sections(draft: AnswerDraft, citations: list[Citation]) -> str:
-    """Render server-owned markers after structured citation validation."""
+def _render_sections(draft: GroundedDraft, citations: list[Citation]) -> str:
+    """Render server-owned markers and source projection for a grounded draft."""
+
+    return _append_sources(_render_grounded_sections(draft, citations), citations)
+
+
+def _render_grounded_sections(draft: GroundedDraft, citations: list[Citation]) -> str:
+    """Render only model sections plus server-owned Citation markers."""
 
     allowed = {citation.segment_id for citation in citations}
     sections: list[str] = []
@@ -175,7 +288,7 @@ def _render_sections(draft: AnswerDraft, citations: list[Citation]) -> str:
         ]
         markers = " ".join(f"[S{segment_id}]" for segment_id in ids)
         sections.append(f"{section.text.strip()} {markers}".strip())
-    return _append_sources("\n\n".join(sections), citations)
+    return "\n\n".join(sections)
 
 
 def _canonical_history(question: str, answer: str) -> list[ModelMessage]:
@@ -197,6 +310,12 @@ def _append_sources(text: str, citations: list[Citation]) -> str:
     nested timestamp link; exact duplicate segment ids were already collapsed
     when evidence was recorded.
     """
+
+    # Canonical, action, failed, and no-evidence dispositions must never gain
+    # a dangling source heading merely because the caller has no selected
+    # Citation set.
+    if not citations:
+        return text.rstrip()
 
     groups: dict[int, list[Citation]] = {}
     for citation in citations:
@@ -221,7 +340,7 @@ def _append_sources(text: str, citations: list[Citation]) -> str:
 
 
 class AnswerPipeline:
-    """Own bounded same-evidence repair and deterministic evidence fallback."""
+    """Own bounded same-evidence answer recovery."""
 
     def __init__(
         self,
@@ -234,145 +353,250 @@ class AnswerPipeline:
         self.composer_model_settings = composer_model_settings
         self.settings = settings
 
-    async def repair_bounded_answer(
+    async def recover_answer(
         self,
         request: AgentRequest,
         deps: AgentDeps,
         diagnostics: RequestDiagnostics,
     ) -> AgentExecution:
-        citations = _limit_citations_by_item(list(deps.citations.values()))
-        ledger = deps.recovery_ledger
-        policy = deps.recovery_policy
-        if ledger is None or policy is None:
-            return self.evidence_fallback(request, citations)
-        error = ErrorEnvelope.from_category(
-            "answer_validation",
-            operation="answer",
-            partial_evidence=True,
+        citations = [
+            citation
+            for citation in deps.citations.values()
+            if not deps.reference_scope
+            or _citation_matches_scope(citation, deps.reference_scope)
+        ]
+        if not citations:
+            if (
+                deps.successful_searches
+                and not deps.pending_read_failures
+                and not deps.read_recovery_exhausted
+            ):
+                return self.no_evidence(
+                    request, diagnostics, deps.actions.read_action_results
+                )
+            return self._answer_unavailable(request, diagnostics, attempt=0)
+
+        required_item_ids = (
+            {citation.item_id for citation in citations}
+            if deps.reference_scope
+            else set()
         )
-        grant = policy.grant(
-            error,
-            has_evidence=True,
-            request_budget_remaining=self.settings.agent_request_limit,
-            provider_budget_remaining=1,
-            answer_budget_remaining=1,
-            output_budget_remaining=self.settings.agent_output_token_limit,
-        )
-        if not grant.permits("repair_answer") or not ledger.record_answer_repair():
-            diagnostics.event(
-                "recovery",
-                error_code=error.code,
-                error_category=error.category,
-                recovery_outcome="denied",
-                recovery_count=grant.remaining_actions,
-                agent_phase="answer",
-            )
-            return self.evidence_fallback(request, citations)
-        diagnostics.event(
-            "recovery",
-            error_code=error.code,
-            error_category=error.category,
-            recovery_action="repair_answer",
-            recovery_outcome="consumed",
-            recovery_count=grant.remaining_actions,
-            agent_phase="answer",
-        )
+        # The answer agent judges relevance across the complete bounded
+        # current-run evidence set.  Eight is an output-selection limit, not a
+        # retrieval-order prefilter; otherwise an important ninth segment
+        # could never be selected.
+        candidates = citations
         composer_deps = ComposerDeps(
-            {citation.segment_id: citation for citation in citations},
+            {citation.segment_id: citation for citation in candidates},
             diagnostics=diagnostics,
+            required_item_ids=frozenset(required_item_ids),
+            max_segments=COMPRESSED_EVIDENCE_LIMIT,
         )
         attempts = 0
+        last_error_category = "answer_validation"
 
-        def record_answer_attempt(_context):
-            nonlocal attempts
-            attempts += 1
+        for attempt_index in range(1, 4):
+            # Count the attempt before entering PydanticAI.  Provider failures
+            # can occur while building or dispatching a request, before the
+            # model-settings callback runs; those failures still consume one
+            # of the three answer-agent attempts and must be observable with a
+            # stable 1..3 index.
+            attempts = attempt_index
+            invalid_drafts_before_attempt = composer_deps.invalid_draft_count
             diagnostics.event(
-                "model_attempt", call_index=attempts, agent_phase="answer"
+                "model_attempt", call_index=attempt_index, agent_phase="answer"
             )
-            return dict(self.composer_model_settings)
-
-        try:
-            async with asyncio.timeout(self.settings.agent_timeout_seconds):
-                result = await self.composer.run(
-                    request.question.strip(),
-                    deps=composer_deps,
-                    usage_limits=UsageLimits(
-                        request_limit=1,
-                        output_tokens_limit=self.settings.agent_output_token_limit,
-                    ),
-                    usage=RunUsage(),
-                    model_settings=record_answer_attempt,
+            try:
+                async with asyncio.timeout(self.settings.agent_timeout_seconds):
+                    result = await self.composer.run(
+                        request.question.strip(),
+                        deps=composer_deps,
+                        usage_limits=UsageLimits(
+                            request_limit=1,
+                            output_tokens_limit=self.settings.agent_output_token_limit,
+                        ),
+                        usage=RunUsage(),
+                        model_settings=dict(self.composer_model_settings),
+                    )
+            except UsageLimitExceeded as exc:
+                last_error_category = "provider_failure"
+                composer_deps.last_failure_reason = "provider_failure"
+                kind, limit, used = classify_usage_limit(exc)
+                diagnostics.event(
+                    "agent_failed",
+                    error_code="answer_unavailable",
+                    error_class=type(exc).__name__,
+                    call_index=attempts,
+                    limit_kind=kind,
+                    limit_value=limit,
+                    used_value=used,
+                    error_category=last_error_category,
+                    failure_reason=composer_deps.last_failure_reason,
+                    agent_phase="answer",
                 )
-        except UsageLimitExceeded as exc:
-            kind, limit, used = classify_usage_limit(exc)
-            diagnostics.event(
-                "agent_failed",
-                error_code="answer_unavailable",
-                exception=exc,
-                limit_kind=kind,
-                limit_value=limit,
-                used_value=used,
-                agent_phase="answer",
-            )
-            return self.evidence_fallback(request, citations)
-        except ModelHTTPError as exc:
-            diagnostics.event(
-                "agent_failed",
-                error_code="answer_unavailable",
-                exception=exc,
-                http_status=exc.status_code,
-                agent_phase="answer",
-            )
-            return self.evidence_fallback(request, citations)
-        except Exception as exc:
-            diagnostics.event(
-                "agent_failed",
-                error_code="answer_unavailable",
-                exception=exc,
-                agent_phase="answer",
-            )
-            return self.evidence_fallback(request, citations)
+                continue
+            except ModelHTTPError as exc:
+                last_error_category = "provider_failure"
+                composer_deps.last_failure_reason = "provider_failure"
+                diagnostics.event(
+                    "agent_failed",
+                    error_code="answer_unavailable",
+                    error_class=type(exc).__name__,
+                    call_index=attempts,
+                    http_status=exc.status_code,
+                    error_category=last_error_category,
+                    failure_reason=composer_deps.last_failure_reason,
+                    agent_phase="answer",
+                )
+                continue
+            except (ModelRetry, UnexpectedModelBehavior) as exc:
+                last_error_category = "answer_validation"
+                if (
+                    composer_deps.invalid_draft_count
+                    == invalid_drafts_before_attempt
+                ):
+                    composer_deps.last_failure_reason = "invalid_structure"
+                diagnostics.event(
+                    "agent_failed",
+                    error_code="answer_unavailable",
+                    error_class=type(exc).__name__,
+                    call_index=attempts,
+                    error_category=last_error_category,
+                    failure_reason=composer_deps.last_failure_reason,
+                    agent_phase="answer",
+                )
+                continue
+            except Exception as exc:
+                last_error_category = "provider_failure"
+                composer_deps.last_failure_reason = "provider_failure"
+                diagnostics.event(
+                    "agent_failed",
+                    error_code="answer_unavailable",
+                    error_class=type(exc).__name__,
+                    call_index=attempts,
+                    error_category=last_error_category,
+                    failure_reason=composer_deps.last_failure_reason,
+                    agent_phase="answer",
+                )
+                continue
 
-        cited_ids = {
-            segment_id
-            for section in result.output.sections
-            for segment_id in section.citation_ids
-        }
-        selected = [
-            citation for citation in citations if citation.segment_id in cited_ids
-        ]
-        answer_text = _render_sections(result.output, selected)
-        diagnostics.event(
-            "citation_validated",
-            result_count=len(selected),
-            retry_count=composer_deps.invalid_draft_count,
-            agent_phase="answer",
-        )
-        return AgentExecution(
-            AgentAnswer(
-                status="ok",
-                text=answer_text,
+            if isinstance(result.output.decision, NoRelevantEvidenceDraft):
+                if deps.pending_read_failures or deps.read_recovery_exhausted:
+                    composer_deps.last_failure_reason = "no_evidence_unavailable"
+                    composer_deps.invalid_draft_count += 1
+                    diagnostics.event(
+                        "citation_validated",
+                        error_code="answer_unavailable",
+                        call_index=attempts,
+                        retry_count=composer_deps.invalid_draft_count,
+                        failure_reason="no_evidence_unavailable",
+                        agent_phase="answer",
+                    )
+                    continue
+                diagnostics.event(
+                    "citation_validated",
+                    error_code="no_evidence",
+                    call_index=attempts,
+                    result_count=0,
+                    retry_count=composer_deps.invalid_draft_count,
+                    disposition="no_evidence",
+                    agent_phase="answer",
+                )
+                return self.no_evidence(
+                    request, diagnostics, deps.actions.read_action_results
+                )
+
+            selected_ids = tuple(
+                segment_id
+                for section in result.output.sections
+                for segment_id in section.citation_ids
+            )
+            selected = [
+                next(
+                    citation
+                    for citation in candidates
+                    if citation.segment_id == segment_id
+                )
+                for segment_id in selected_ids
+            ]
+            grounded_sections = tuple(
+                GroundedResponseSection(
+                    "grounded", section.text, tuple(section.citation_ids)
+                )
+                for section in result.output.decision.sections
+            )
+            diagnostics.event(
+                "citation_validated",
+                call_index=attempts,
+                result_count=len(selected),
+                retry_count=composer_deps.invalid_draft_count,
+                agent_phase="answer",
+            )
+            envelope = ResponseEnvelope.grounded(
+                sections=grounded_sections,
                 citations=selected,
-                thread_id=request.thread_public_id,
-            ),
-            _canonical_history(request.question, answer_text),
+                action_results=deps.actions.read_action_results,
+            )
+            answer_text = envelope.project(thread_id=request.thread_public_id).text
+            return AgentExecution(
+                envelope.project(thread_id=request.thread_public_id),
+                _canonical_history(request.question, answer_text),
+            )
+
+        return self._answer_unavailable(
+            request,
+            diagnostics,
+            attempt=attempts,
+            error_category=last_error_category,
+            failure_reason=composer_deps.last_failure_reason,
         )
 
     @staticmethod
-    def evidence_fallback(
+    def _answer_unavailable(
         request: AgentRequest,
-        citations: list[Citation],
+        diagnostics: RequestDiagnostics,
+        *,
+        attempt: int,
+        error_category: str = "answer_validation",
+        failure_reason: str | None = None,
     ) -> AgentExecution:
-        answer_text = _append_sources(FALLBACK_INTRO, citations)
+        diagnostics.event(
+            "agent_failed",
+            error_code="answer_unavailable",
+            call_index=attempt,
+            error_category=error_category,
+            failure_reason=failure_reason,
+            agent_phase="answer",
+        )
+        text = "暂时无法生成可靠回答，请稍后重试。"
+        envelope = ResponseEnvelope.failed(text=text, error_code="answer_unavailable")
         return AgentExecution(
-            AgentAnswer(
-                status="ok",
-                text=answer_text,
-                citations=citations,
-                thread_id=request.thread_public_id,
-            ),
-            _canonical_history(request.question, answer_text),
+            envelope.project(thread_id=request.thread_public_id),
+            [],
         )
 
+    @staticmethod
+    def no_evidence(
+        request: AgentRequest,
+        diagnostics: RequestDiagnostics,
+        action_results=(),
+    ) -> AgentExecution:
+        """Project the server-owned no-evidence disposition.
 
-FALLBACK_INTRO = "自动总结未完成，以下是知识库中最相关的证据："
+        Candidate rows are deliberately not passed into this envelope.  The
+        public adapter therefore cannot attach source blocks to a no-evidence
+        result merely because a search returned unrelated candidates.
+        """
+
+        diagnostics.event(
+            "citation_validated",
+            error_code="no_evidence",
+            disposition="no_evidence",
+            result_count=0,
+            agent_phase="answer",
+        )
+        envelope = ResponseEnvelope.no_evidence(action_results=action_results)
+        return AgentExecution(
+            envelope.project(thread_id=request.thread_public_id),
+            [],
+        )

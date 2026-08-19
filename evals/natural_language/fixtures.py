@@ -99,6 +99,45 @@ async def prepare_fixtures(
     return FixtureState(variables, frozenset(capabilities), readiness)
 
 
+async def prepare_existing_fixtures(
+    runtime: LiveMcpSession,
+    catalog: Catalog,
+    *,
+    fixture_names: set[str],
+) -> FixtureState:
+    """Resolve ready read-only fixtures without provisioning or worker checks."""
+
+    if not fixture_names or fixture_names - set(catalog.fixtures):
+        raise RuntimeError("human benchmark references unknown fixtures")
+    variables: dict[str, Any] = {"unknown_topic": "月球背面的紫色咖啡机协议 ZQ-947"}
+    selected = {name: catalog.fixtures[name] for name in sorted(fixture_names)}
+    inventory = await _all_inventory(runtime)
+    by_reference = {
+        key: row
+        for row in inventory
+        if isinstance(row, dict)
+        and isinstance(row.get("url"), str)
+        and (key := _reference_key(row["url"])) is not None
+    }
+    for name, fixture in selected.items():
+        variables[f"{name}_url"] = fixture.url
+        variables[f"{name}_topic"] = fixture.topic
+        row = by_reference.get(_reference_key(fixture.url))
+        if (
+            row is None
+            or row.get("ingestion_state") != "ready"
+            or row.get("deleted_at") is not None
+            or not isinstance(row.get("item_id"), int)
+        ):
+            raise RuntimeError("required read-only fixture is unavailable")
+        variables[f"{name}_item_id"] = row["item_id"]
+    return FixtureState(
+        variables,
+        frozenset({"ready_item"}),
+        {"existing_ready_items": True, "provisioned_this_run": False},
+    )
+
+
 async def _all_inventory(runtime: LiveMcpSession) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     cursor: str | None = None

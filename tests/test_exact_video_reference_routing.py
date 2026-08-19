@@ -19,6 +19,7 @@ from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
 
 from app.agent.actions import AgentActionServices
+from app.agent.context import ContextItemRef, TurnContext
 from app.agent.runtime import KnowledgeAgent
 from app.agent.services import ItemDetails, KnowledgeNotFound, KnowledgeServices
 from app.agent.types import AgentRequest, Citation
@@ -279,7 +280,10 @@ async def test_explicit_url_scope_filters_wrong_video_before_composer():
     planner = TestModel(call_tools=["search_segments"], custom_output_text="stop")
     composer = TestModel(
         custom_output_text=json.dumps(
-            {"sections": [{"text": "only target", "citation_ids": [22]}]}
+            {
+                "kind": "grounded",
+                "sections": [{"text": "only target", "citation_ids": [22]}],
+            }
         )
     )
     runtime = KnowledgeAgent(
@@ -294,6 +298,113 @@ async def test_explicit_url_scope_filters_wrong_video_before_composer():
     assert services.scope == (("youtube", "M7lc1UVf-VE"),)
     assert result.answer.citations == [right]
     assert "wrong evidence" not in result.answer.text
+
+
+@pytest.mark.asyncio
+async def test_exact_scope_citation_cannot_authorize_out_of_scope_item_search():
+    wrong = Citation(
+        item_id=1,
+        segment_id=11,
+        title="wrong",
+        excerpt="wrong evidence",
+        url="https://youtu.be/dQw4w9WgXcQ?t=10",
+    )
+    right = Citation(
+        item_id=2,
+        segment_id=22,
+        title="right",
+        excerpt="right evidence",
+        url="https://youtu.be/M7lc1UVf-VE?t=20",
+    )
+
+    class _ScopedServices(_Services):
+        def __init__(self):
+            super().__init__([wrong, right])
+            self.item_ids: list[int | None] = []
+
+        def search_segments(self, _query, *, limit=6, item_id=None):
+            self.item_ids.append(item_id)
+            self.calls += 1
+            return list(self.citations)
+
+    services = _ScopedServices()
+
+    def planner(messages, _info):
+        returns = sum(
+            isinstance(part, ToolReturnPart)
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+        if returns == 0:
+            return ModelResponse(
+                parts=[ToolCallPart("search_segments", {"query": "target"})]
+            )
+        if returns == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "search_segments",
+                        {"query": "wrong item", "item_id": 1},
+                    )
+                ]
+            )
+        return ModelResponse(parts=[TextPart("stop")])
+
+    result = await KnowledgeAgent(
+        FunctionModel(planner),
+        replace(Settings(), agent_timeout_seconds=2),
+        lambda _request: services,
+    ).run(_request("https://youtu.be/M7lc1UVf-VE 讲了什么"))
+
+    assert result.answer.status == "failed"
+    assert result.answer.error_code == "item_scope_required"
+    assert services.item_ids == [None]
+    assert services.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_exact_scope_prior_inventory_cannot_authorize_out_of_scope_search():
+    class _ScopedServices(_Services):
+        def __init__(self):
+            super().__init__()
+            self.item_ids: list[int | None] = []
+
+        def search_segments(self, _query, *, limit=6, item_id=None):
+            self.item_ids.append(item_id)
+            return []
+
+    services = _ScopedServices()
+
+    def planner(_messages, _info):
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "search_segments",
+                    {"query": "wrong historical item", "item_id": 1},
+                )
+            ]
+        )
+
+    scoped_request = _request("https://youtu.be/M7lc1UVf-VE 讲了什么")
+    result = await KnowledgeAgent(
+        FunctionModel(planner),
+        replace(Settings(), agent_timeout_seconds=2),
+        lambda _request: services,
+    ).run(
+        replace(
+            scoped_request,
+            context=TurnContext(
+                recent_inventory=(
+                    ContextItemRef(item_id=1, title="historical item"),
+                )
+            ),
+        )
+    )
+
+    assert result.answer.status == "failed"
+    assert result.answer.error_code == "item_scope_required"
+    assert services.item_ids == []
 
 
 @pytest.mark.asyncio
@@ -341,7 +452,10 @@ async def test_history_cannot_turn_explicit_content_question_into_save_action():
 
     composer = TestModel(
         custom_output_text=json.dumps(
-            {"sections": [{"text": "only target", "citation_ids": [22]}]}
+            {
+                "kind": "grounded",
+                "sections": [{"text": "only target", "citation_ids": [22]}],
+            }
         )
     )
     runtime = KnowledgeAgent(
@@ -420,7 +534,10 @@ async def test_out_of_scope_expansion_ids_cannot_enter_trusted_citations():
 
     composer = TestModel(
         custom_output_text=json.dumps(
-            {"sections": [{"text": "only target", "citation_ids": [22]}]}
+            {
+                "kind": "grounded",
+                "sections": [{"text": "only target", "citation_ids": [22]}],
+            }
         )
     )
     runtime = KnowledgeAgent(
@@ -472,7 +589,10 @@ async def test_scoped_missing_lookup_has_one_truthful_tool_outcome(caplog):
         lambda _request: services,
         composer_model=TestModel(
             custom_output_text=json.dumps(
-                {"sections": [{"text": "target", "citation_ids": [22]}]}
+                {
+                    "kind": "grounded",
+                    "sections": [{"text": "target", "citation_ids": [22]}],
+                }
             )
         ),
     )

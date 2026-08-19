@@ -1,0 +1,6 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/agent-retrieval-convergence.md", "reason": "Verify bounded single-Agent semantics, answer recovery, source limits, and persistence remain safe."}
+{"file": ".trellis/spec/backend/langbot-channel-runtime.md", "reason": "Verify server-owned section changes do not broaden channel trust or payload exposure."}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Verify new disposition and validation diagnostics remain privacy-safe."}
+{"file": ".trellis/tasks/archive/2026-08/08-18-agent-quality-benchmark/validation.md", "reason": "Verify the implementation addresses the reviewed failures without rewriting human verdicts."}
+{"file": ".trellis/tasks/archive/2026-08/08-18-agent-quality-benchmark/research/human-review-trusted-section-findings-2026-08-19.md", "reason": "Check no-evidence, HE-003, and channel ownership claims against recorded evidence."}

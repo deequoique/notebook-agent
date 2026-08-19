@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import re
 import sys
@@ -21,9 +22,37 @@ from app.diagnostics import _TOOLS as AGENT_TOOL_NAMES
 from app.mcp_server import MCP_TOOL_NAMES
 
 _SAFE_STAGES = frozenset(
-    {"model_attempt", "tool_call", "action_validated", "gateway_response_ready"}
+    {
+        "model_attempt",
+        "tool_call",
+        "action_validated",
+        "agent_failed",
+        "citation_validated",
+        "gateway_response_ready",
+    }
 )
 _SAFE_OUTCOMES = frozenset({"started", "succeeded", "failed", "skipped"})
+_SAFE_ERROR_CODES = frozenset(
+    {
+        "limit",
+        "timeout",
+        "item_scope_required",
+        "answer_unavailable",
+        "runtime_error",
+        "not_found",
+        "search_required",
+        "no_evidence",
+    }
+)
+_SAFE_FAILURE_REASONS = frozenset(
+    {
+        "invalid_structure", "unsafe_text", "missing_citation", "invalid_citation",
+        "unknown_citation", "duplicate_citation",
+        "too_many_segments", "too_many_items", "missing_scope_item",
+        "no_evidence_unavailable", "provider_failure",
+    }
+)
+_SAFE_DISPOSITIONS = frozenset({"grounded", "no_evidence", "canonical", "action", "failed"})
 _REQUEST_ID_RE = re.compile(r"[0-9a-f]{32}\Z")
 
 
@@ -39,6 +68,7 @@ class ToolTrace:
 class DiagnosticCollector:
     _buffer: str = ""
     _events: list[dict[str, Any]] = field(default_factory=list)
+    _retrieval_events: list[dict[str, Any]] = field(default_factory=list)
     malformed_count: int = 0
     _lock: Lock = field(default_factory=Lock)
 
@@ -63,7 +93,12 @@ class DiagnosticCollector:
         except (json.JSONDecodeError, TypeError):
             self.malformed_count += 1
             return
-        if not isinstance(value, dict) or value.get("event") != "knowledge_request":
+        if not isinstance(value, dict):
+            return
+        if value.get("event") == "retrieval_detail":
+            self._accept_retrieval(value)
+            return
+        if value.get("event") != "knowledge_request":
             return
         stage, request_id = value.get("stage"), value.get("request_id")
         if stage not in _SAFE_STAGES or not isinstance(request_id, str) or not _REQUEST_ID_RE.fullmatch(request_id):
@@ -77,7 +112,36 @@ class DiagnosticCollector:
             event["tool_outcome"] = value["tool_outcome"]
         if value.get("agent_phase") in {"retrieval", "answer"}:
             event["agent_phase"] = value["agent_phase"]
+        if value.get("error_code") in _SAFE_ERROR_CODES:
+            event["error_code"] = value["error_code"]
+        if value.get("failure_reason") in _SAFE_FAILURE_REASONS:
+            event["failure_reason"] = value["failure_reason"]
+        if value.get("disposition") in _SAFE_DISPOSITIONS:
+            event["disposition"] = value["disposition"]
         self._events.append(event)
+
+    def _accept_retrieval(self, value: dict[str, Any]) -> None:
+        request_id = value.get("request_id")
+        tool_name = value.get("tool_name")
+        if (
+            not isinstance(request_id, str)
+            or not _REQUEST_ID_RE.fullmatch(request_id)
+            or tool_name not in {"search_segments", "get_neighbors"}
+        ):
+            return
+        event: dict[str, Any] = {"request_id": request_id, "tool_name": tool_name}
+        call_index = value.get("call_index")
+        if isinstance(call_index, int) and not isinstance(call_index, bool) and 0 <= call_index <= 100:
+            event["call_index"] = call_index
+        for key in ("item_id", "segment_id"):
+            item = value.get(key)
+            if isinstance(item, int) and not isinstance(item, bool) and item > 0:
+                event[key] = item
+        for source, target in (("start", "start_sec"), ("score", "score")):
+            item = value.get(source)
+            if isinstance(item, (int, float)) and not isinstance(item, bool) and math.isfinite(item):
+                event[target] = float(item)
+        self._retrieval_events.append(event)
 
     def events_for(self, request_id: str) -> list[dict[str, Any]]:
         with self._lock:
@@ -106,6 +170,50 @@ class DiagnosticCollector:
 
     def has_model_attempt(self, request_id: str) -> bool:
         return any(row["stage"] == "model_attempt" for row in self.events_for(request_id))
+
+    def model_attempt_count(self, request_id: str) -> int:
+        return sum(
+            row["stage"] == "model_attempt" for row in self.events_for(request_id)
+        )
+
+    def agent_failure_code(self, request_id: str) -> str | None:
+        failures = [
+            row.get("error_code")
+            for row in self.events_for(request_id)
+            if row["stage"] == "agent_failed"
+            and isinstance(row.get("error_code"), str)
+        ]
+        return failures[-1] if failures else None
+
+    def has_retrieval_detail_call(
+        self, request_id: str, *, tool_name: str = "search_segments"
+    ) -> bool:
+        with self._lock:
+            return any(
+                row["request_id"] == request_id and row["tool_name"] == tool_name
+                for row in self._retrieval_events
+            )
+
+    def retrieval_hits_for(
+        self, request_id: str, *, tool_name: str = "search_segments"
+    ) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = [
+                dict(row)
+                for row in self._retrieval_events
+                if row["request_id"] == request_id
+                and row["tool_name"] == tool_name
+                and "item_id" in row
+                and "segment_id" in row
+            ]
+        return [
+            {
+                "item_id": row["item_id"],
+                "segment_id": row["segment_id"],
+                **({"start_sec": row["start_sec"]} if "start_sec" in row else {}),
+            }
+            for row in rows
+        ]
 
 
 class LiveMcpSession:

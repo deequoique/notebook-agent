@@ -42,9 +42,12 @@ Add a Chrome/Chromium browser companion that can save the video currently open o
 
 - Pair the extension with a Notebook Agent account through an explicit, revocable flow.
 - Pairing approval must occur in the authenticated Notebook Agent Web origin; the extension receives its own least-privilege capture credential and must not read or duplicate the Web session cookie.
+- Opening an approval link while signed out must return to that exact, validated browser-companion approval after login. Public showcase/login entry points must download the extension (or lead to its store listing when published), not enter authenticated connection management.
+- Web approval and device connection are distinct states: approval copy must not claim the device is connected before verifier exchange succeeds, and the extension must show a safe actionable reason for every pairing failure.
 - Authenticate every capture submission and bind it to the correct Notebook Agent tenant/user.
 - Do not upload or persist Google/NTU passwords, SAML responses, browser cookies, Kaltura KS tokens, YouTube session tokens, or other long-lived third-party session material.
 - Avoid broad page access beyond the minimum host permissions and user gesture needed for supported capture.
+- A wildcard Chrome-extension Origin is permitted only for a loopback-bound development Web server; production continues to require exact extension IDs.
 
 ### R4. Backend integration
 

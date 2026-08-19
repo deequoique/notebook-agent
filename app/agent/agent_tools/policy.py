@@ -115,6 +115,19 @@ class ToolPolicy:
             return None
         return tool_def
 
+    def prepare_no_relevant_evidence(self, ctx: RunContext[AgentDeps], tool_def):
+        """Expose the no-evidence disposition only after a clean search."""
+
+        deps = ctx.deps
+        if (
+            deps.successful_searches > 0
+            and not deps.pending_read_failures
+            and not deps.read_recovery_exhausted
+            and deps.actions.outcome is None
+        ):
+            return tool_def
+        return None
+
     def execute_tool(self, deps: AgentDeps, name: str, operation):
         """Record only the tool boundary, never its arguments or output."""
         with deps._tool_lock:

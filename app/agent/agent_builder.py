@@ -19,7 +19,8 @@ BOUNDED_AUTONOMY_INSTRUCTIONS = """
    不要为了形式调用知识工具，也不要伪造 Citation、来源区块或 URL。
 2. 需要私有知识时自行选择合适的知识工具；只有成功的本轮检索证据可以支持知识事实。
    成功检索后，最终回答必须在相关句子中使用本轮工具返回的精确 [S<segment_id>] 标记。
-   不得猜测或复用历史 Citation ID，不得输出 URL 或服务器来源区块。
+   如果候选都不支持问题，检索成功后调用 report_no_relevant_evidence；不要为了满足引用要求
+   选择无关片段。不得猜测或复用历史 Citation ID，不得输出 URL 或服务器来源区块。
 3. 缺少可信指代或信息时先自然询问澄清，不要猜测条目、租户、作用域或工具参数。
 4. 只有存在多个相互依赖的短步骤时才使用 todo_write；普通对话和单工具请求不要创建 Todo。
    Todo 只是本轮工作记忆，不代表工具成功、授权或副作用结果。
@@ -116,6 +117,30 @@ def build_agent(
                 for item in snapshot.items
             ]
         }
+
+    @agent.tool(prepare=policy.prepare_no_relevant_evidence)
+    def report_no_relevant_evidence(ctx: RunContext[AgentDeps]) -> dict:
+        """Record a server-owned no-evidence decision after a clean search."""
+
+        if (
+            ctx.deps.successful_searches < 1
+            or ctx.deps.pending_read_failures
+            or ctx.deps.read_recovery_exhausted
+            or ctx.deps.actions.outcome is not None
+        ):
+            raise ModelRetry(
+                "只有成功完成本轮检索且没有读取失败或终止操作时，才能报告没有相关证据。"
+            )
+        ctx.deps.no_relevant_evidence_requested = True
+        _, call_index = policy.execute_tool(
+            ctx.deps,
+            "report_no_relevant_evidence",
+            lambda: {"status": "ok", "disposition": "no_relevant_evidence"},
+        )
+        ctx.deps.tool_event(
+            "report_no_relevant_evidence", "succeeded", call_index, 0
+        )
+        return {"status": "ok", "disposition": "no_relevant_evidence"}
 
     @agent.instructions
     def retrieval_convergence_instruction(ctx: RunContext[AgentDeps]) -> str:

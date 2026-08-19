@@ -1,0 +1,22 @@
+# 人工评分记录模板。不要把模型回答或评分写回 human_eval_samples.yaml。
+# 每个 sample_id 对应一次模型输出；未评分用 null，有争议用 disputed。
+schema_version: "1.0.0"
+rubric_version: "1.0.0"
+scores:
+  - sample_id: "he-001"
+    run_id: "TODO: 评测运行 ID"
+    reviewer_id: "TODO: 评审代号，不填真实姓名"
+    model_answer: "TODO: 受控本地副本；不要提交仓库"
+    cited_item_ids: []
+    cited_segment_ids: []
+    cited_timestamp_ranges: []
+    rubric:
+      answered_question: null # 0/1
+      evidence_grounded: null # 0/1，仅使用知识库证据
+      correct_video: null # 0/1
+      timestamp_locatable: null # 0/1；无证据样本按拒答边界评分
+      no_unsupported_claims: null # 0/1
+      tone_and_guidance: null # 0/1
+    verdict: null # pass | fail；人工最终结论，自动指标不得填写
+    adjudication: "pending" # pending | accepted | disputed
+    note: ""

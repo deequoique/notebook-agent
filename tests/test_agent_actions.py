@@ -722,6 +722,56 @@ async def test_mixed_search_then_save_returns_action_without_citation_retry():
 
 
 @pytest.mark.asyncio
+async def test_terminal_action_wins_over_later_invalid_scoped_search():
+    submission = FakeSubmission(_queued_result())
+    pending = FakePending()
+
+    def model(messages, _info):
+        has_return = any(
+            isinstance(part, ToolReturnPart)
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+        if has_return:
+            return ModelResponse(parts=[TextPart("untrusted mixed draft")])
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "save_videos",
+                    json.dumps(
+                        {
+                            "urls": ["https://youtu.be/dQw4w9WgXcQ"],
+                            "why_saved": "稍后复习",
+                        }
+                    ),
+                    tool_call_id="save-first",
+                ),
+                ToolCallPart(
+                    "search_segments",
+                    json.dumps({"query": "forged", "item_id": 999}),
+                    tool_call_id="scope-after-action",
+                ),
+            ]
+        )
+
+    runtime = KnowledgeAgent(
+        FunctionModel(model),
+        replace(Settings(), agent_timeout_seconds=2, agent_tool_calls_limit=2),
+        lambda _request: FakeKnowledgeServices(),
+        action_factory=lambda _request: AgentActionServices(submission, pending),
+    )
+    result = await runtime.run(
+        _request("帮我保存这个视频 https://youtu.be/dQw4w9WgXcQ")
+    )
+
+    assert result.answer.status == "ok"
+    assert result.answer.error_code == "save_accepted"
+    assert result.answer.citations == []
+    assert len(submission.calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_mixed_search_and_delete_uses_canonical_per_item_outcome():
     rows = (
         {"item_id": 1, "status": "deleted", "safe_error_code": None},
