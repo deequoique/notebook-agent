@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 
-import type { ConversationHistoryPage, ConversationResponse, ConversationTurns } from "../api/contracts";
+import type { Capabilities, ConversationHistoryPage, ConversationResponse, ConversationTurns } from "../api/contracts";
 import { ChatPage } from "./ChatPage";
 
 const history: ConversationHistoryPage = {
@@ -37,12 +37,25 @@ const turns: ConversationTurns = {
   }],
 };
 
+const capabilities: Capabilities = {
+  supported_platforms: ["youtube"],
+  browser_companion: true,
+  web_login_channels: ["email"],
+  save_enabled: false,
+  max_save_batch_size: 10,
+  transcript_pagination: true,
+  archive: false,
+  summary_generation: false,
+  chat: true,
+};
+
 function renderPage(props: Partial<Parameters<typeof ChatPage>[0]> = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <MemoryRouter>
       <QueryClientProvider client={client}>
         <ChatPage
+          loadCapabilities={vi.fn().mockResolvedValue(capabilities)}
           fetchHistory={vi.fn().mockResolvedValue(history)}
           fetchTurns={vi.fn().mockResolvedValue(turns)}
           reset={vi.fn().mockResolvedValue({ status: "ok", text: "", citations: [], action_results: [], thread_id: "thread-new", error_code: null })}
@@ -80,7 +93,7 @@ describe("AI search chat page", () => {
     await user.click(input);
     await user.type(input, "空历史时也能提问吗？");
     expect(input).toHaveValue("空历史时也能提问吗？");
-    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    await user.click(screen.getByRole("button", { name: /发送问题/ }));
     expect(send).toHaveBeenCalledWith("new-id", {
       message_id: "new-id",
       text: "空历史时也能提问吗？",
@@ -88,9 +101,11 @@ describe("AI search chat page", () => {
   });
 
   it("shows the history error only when the history request actually fails", async () => {
-    renderPage({ fetchHistory: vi.fn().mockRejectedValue(new Error("network unavailable")) });
+    const view = renderPage({ fetchHistory: vi.fn().mockRejectedValue(new Error("network unavailable")) });
 
-    expect(await screen.findByRole("alert", {}, { timeout: 2_500 })).toHaveTextContent("历史对话加载失败。");
+    expect(await screen.findByText("历史对话加载失败。", {}, { timeout: 2_500 })).toBeInTheDocument();
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    await waitFor(() => expect(view.container.querySelector(".chat-conversation")).toHaveAttribute("aria-busy", "false"));
   });
 
   it("selects the latest persisted conversation and renders its safe citations", async () => {
@@ -100,7 +115,7 @@ describe("AI search chat page", () => {
     await waitFor(() => expect(fetchTurns).toHaveBeenCalledWith("thread-1"));
     await waitFor(() => expect(screen.getAllByText("先明确你要验证的假设。")).toHaveLength(2));
     expect(screen.getByRole("link", { name: /访谈方法/ })).toHaveAttribute("href", "https://example.test/video");
-    expect(screen.getByText("1:05")).toBeInTheDocument();
+    expect(screen.getByText(/1:05/)).toBeInTheDocument();
   });
 
   it("sends a question through the selected durable conversation and prevents duplicate submit", async () => {
@@ -114,7 +129,7 @@ describe("AI search chat page", () => {
     const input = await screen.findByRole("textbox", { name: "向资料库提问" });
     await waitFor(() => expect(input).toBeEnabled());
     await user.type(input, "怎样做有效访谈？");
-    const submit = screen.getByRole("button", { name: "发送问题" });
+    const submit = screen.getByRole("button", { name: /发送问题/ });
     await user.click(submit);
 
     expect(send).toHaveBeenCalledWith("conversation-1", {
@@ -135,7 +150,39 @@ describe("AI search chat page", () => {
     });
     renderPage({ reset });
 
-    await user.click(await screen.findByRole("button", { name: "新建对话" }));
+    await user.click(await screen.findByRole("button", { name: "新建检索" }));
     expect(reset).toHaveBeenCalledWith("new-id");
+  });
+
+  it("fills the composer from a concrete example question", async () => {
+    const user = userEvent.setup();
+    renderPage({
+      fetchTurns: vi.fn().mockResolvedValue({
+        thread_id: "thread-1",
+        conversation_id: "conversation-1",
+        turns: [],
+      }),
+    });
+
+    const suggestion = await screen.findByRole("button", {
+      name: /这个观点在哪个视频的什么位置/,
+    });
+    await user.click(suggestion);
+
+    expect(screen.getByRole("textbox", { name: "向资料库提问" })).toHaveValue(
+      "这个观点在哪个视频的什么位置？",
+    );
+  });
+
+  it("does not load conversations when this deployment has chat disabled", async () => {
+    const fetchHistory = vi.fn().mockResolvedValue(history);
+    renderPage({
+      loadCapabilities: vi.fn().mockResolvedValue({ ...capabilities, chat: false }),
+      fetchHistory,
+    });
+
+    expect(await screen.findByRole("heading", { name: "尚未开放 AI 智能检索" })).toBeInTheDocument();
+    expect(fetchHistory).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "新建检索" })).toBeDisabled();
   });
 });

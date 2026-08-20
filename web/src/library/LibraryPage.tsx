@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
 import {
+  ApiError,
   getCapabilities,
   listLibraryItems,
   submitVideoBatch,
@@ -20,6 +21,14 @@ interface LibraryPageProps {
   fetchItems?: (query: LibraryQuery) => Promise<LibraryPageResponse>;
   loadCapabilities?: () => Promise<Capabilities>;
   submitBatch?: (input: BatchSubmitInput) => Promise<BatchSubmitResponse>;
+}
+
+function libraryErrorDescription(error: unknown): string {
+  if (!(error instanceof ApiError)) return "网络连接没有完成，请确认服务可用后重新加载。";
+  if (error.status === 403) return "当前账户无法访问这份资料库，请重新登录或联系管理员确认权限。";
+  if (error.status === 429) return "请求过于频繁，请稍等片刻后重新加载。";
+  if (error.status >= 500) return "资料库服务暂时没有响应，已有内容不会丢失，请稍后重试。";
+  return "资料库请求没有完成，请重新加载。";
 }
 
 export function LibraryPage({
@@ -59,7 +68,17 @@ export function LibraryPage({
     retry: false,
     staleTime: 5 * 60_000,
   });
-  const saveDisabled = capabilities.data?.save_enabled === false;
+  const saveDisabled = capabilities.data?.save_enabled !== true;
+  const saveNoticeId = capabilities.isError || capabilities.data?.save_enabled === false
+    ? "library-save-notice"
+    : undefined;
+  const saveButtonLabel = capabilities.isPending
+    ? "正在确认添加功能"
+    : capabilities.isError
+      ? "无法确认添加功能"
+      : saveDisabled
+        ? "暂时无法添加视频"
+        : "添加视频";
   useEffect(() => {
     if (!library.data) return;
     const discovered = collectCollectionNames(library.data.items.map((item) => item.why_saved));
@@ -126,16 +145,38 @@ export function LibraryPage({
           <p>添加视频后，系统会自动整理视频信息、章节和字幕。</p>
         </div>
         <div className="library-heading__actions">
-          <RouteLink className="button button--quiet" to="/chat">AI 智能检索</RouteLink>
+          {capabilities.data?.chat === true ? (
+            <RouteLink className="button button--quiet" to="/chat">AI 智能检索</RouteLink>
+          ) : null}
           <button
             className="button button--primary"
             disabled={saveDisabled}
+            aria-describedby={saveNoticeId}
             onClick={() => setDialogOpen(true)}
           >
-            {saveDisabled ? "暂时无法添加视频" : "添加视频"}
+            {saveButtonLabel}
           </button>
         </div>
       </section>
+
+      {capabilities.isError ? (
+        <aside className="library-notice library-notice--error" id="library-save-notice" role="alert">
+          <div>
+            <strong>暂时无法确认视频添加功能</strong>
+            <p>资料库仍可浏览和检索。请检查网络后重新确认，不需要刷新整个页面。</p>
+          </div>
+          <button className="text-button" type="button" onClick={() => void capabilities.refetch()}>重新检查</button>
+        </aside>
+      ) : null}
+      {capabilities.data?.save_enabled === false ? (
+        <aside className="library-notice" id="library-save-notice" role="note">
+          <div>
+            <strong>当前部署暂未开放服务器端添加</strong>
+            <p>已有视频仍可阅读和检索；若已安装浏览器插件，可从打开的视频页面保存字幕。</p>
+          </div>
+          <RouteLink className="text-button" to="/account/browser-companion">查看浏览器插件</RouteLink>
+        </aside>
+      ) : null}
 
       <section className="library-toolbar" aria-label="资料库筛选">
         <form
@@ -226,7 +267,7 @@ export function LibraryPage({
       ) : null}
 
       {library.isPending ? <LibraryLoadingState /> : null}
-      {library.isError ? <LibraryErrorState onRetry={() => void library.refetch()} /> : null}
+      {library.isError ? <LibraryErrorState description={libraryErrorDescription(library.error)} onRetry={() => void library.refetch()} /> : null}
       {library.isSuccess && library.data.items.length === 0 ? (
         <LibraryEmptyState
           trueFirstEmpty={library.data.is_true_first_empty && !query.search && !lifecycle}
@@ -238,7 +279,7 @@ export function LibraryPage({
           <div className="library-summary"><span aria-label="当前可阅读视频数量">{readableItems.length} 个视频</span>{shouldPollLibrary(library.data.items) ? <span className="live-note" aria-live="polite"><i />正在自动更新状态</span> : null}</div>
           {readableItems.length > 0 ? (
             <section className="library-ready-zone" aria-label="可阅读视频">
-              <div className="video-grid">
+              <div className={`video-grid${readableItems.length === 3 ? " video-grid--trio" : ""}`}>
                 {readableItems.map((item) => <VideoCard item={item} key={item.public_id} />)}
               </div>
             </section>

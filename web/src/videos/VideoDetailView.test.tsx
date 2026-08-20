@@ -246,19 +246,19 @@ describe("video detail", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "编辑" }));
+    await user.click(screen.getByRole("button", { name: "编辑说明和收藏夹" }));
     const input = screen.getByRole("textbox", { name: "保存说明" });
     await user.clear(input);
     await user.type(input, "新的保存原因");
-    await user.click(screen.getByRole("button", { name: "保存说明" }));
+    await user.click(screen.getByRole("button", { name: "保存说明和收藏夹" }));
     expect(await screen.findByRole("textbox", { name: "保存说明" })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "保存说明" }));
+    await user.click(screen.getByRole("button", { name: "保存说明和收藏夹" }));
     expect(screen.queryByRole("textbox", { name: "保存说明" })).not.toBeInTheDocument();
     expect(updateWhySaved).toHaveBeenCalledTimes(2);
   });
 
-  it("shows collection tags separately and preserves them when editing the reason", async () => {
+  it("shows collection tags separately and lets the saved context editor add a collection", async () => {
     const user = userEvent.setup();
     const updateWhySaved = vi.fn().mockResolvedValue(undefined);
     render(
@@ -275,14 +275,17 @@ describe("video detail", () => {
 
     expect(screen.getByLabelText("所属收藏夹")).toHaveTextContent("#产品调研");
     expect(screen.getByText("整理知识管理方法")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "编辑" }));
+    await user.click(screen.getByRole("button", { name: "编辑说明和收藏夹" }));
     const reason = screen.getByRole("textbox", { name: "保存说明" });
     expect(reason).toHaveValue("整理知识管理方法");
     await user.clear(reason);
     await user.type(reason, "新的保存说明");
-    await user.click(screen.getByRole("button", { name: "保存说明" }));
+    await user.type(screen.getByRole("textbox", { name: "新收藏夹" }), "AI_入门");
+    await user.click(screen.getByRole("button", { name: "添加" }));
+    expect(screen.getByRole("list", { name: "正在编辑的收藏夹" })).toHaveTextContent("#AI_入门");
+    await user.click(screen.getByRole("button", { name: "保存说明和收藏夹" }));
 
-    expect(updateWhySaved).toHaveBeenCalledWith("新的保存说明 #产品调研");
+    expect(updateWhySaved).toHaveBeenCalledWith("新的保存说明 #产品调研 #AI_入门");
   });
 
   it("maps language codes and cover placeholders to user-facing copy", () => {
