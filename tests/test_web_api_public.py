@@ -29,7 +29,7 @@ def test_public_health_capabilities_and_openapi_are_safe():
 
     assert capabilities.status_code == 200
     assert capabilities.json() == {
-        "supported_platforms": ["youtube", "ntu_kaltura"],
+        "supported_platforms": ["youtube", "bilibili", "ntu_kaltura"],
         "browser_companion": True,
         "web_login_channels": ["telegram", "wechat"],
         "save_enabled": True,

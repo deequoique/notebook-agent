@@ -12,6 +12,7 @@ from typing import Protocol
 from sqlalchemy import select
 
 from app.connectors.base import Cue, TransientFetchError
+from app.connectors.bilibili import parse_srt
 from app.connectors.youtube import parse_json3
 from app.browser_capture import parse_canonical_transcript, timestamp_url
 from app.models import ContentItem
@@ -156,6 +157,8 @@ class TranscriptService:
                 cues = parsed.cues
             elif raw_format == "json3":
                 cues = parse_json3(body)
+            elif raw_format == "srt":
+                cues = parse_srt(body)
             else:
                 raise TranscriptError("transcript_invalid")
             blocks = _blocks(cues, source_url, platform=platform)

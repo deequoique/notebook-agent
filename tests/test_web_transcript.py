@@ -106,6 +106,28 @@ def test_original_json3_is_used_and_blocks_are_non_overlapping_and_deduplicated(
     assert page.next_cursor is None
 
 
+def test_bilibili_srt_is_read_through_the_same_transcript_contract():
+    body = b"1\n00:00:01,000 --> 00:00:03,000\nhello from Bilibili\n"
+    store = Store(body)
+    transcript, _ = service(
+        content(
+            platform="bilibili",
+            raw_format="srt",
+            raw_object_key="7/bilibili/BV1xx411c7mD/hash.srt",
+            url="https://www.bilibili.com/video/BV1xx411c7mD",
+        ),
+        store,
+    )
+
+    page = transcript.get(SimpleNamespace(app_user_id=7), "item-public", limit=10)
+
+    assert [block.text for block in page.blocks] == ["hello from Bilibili"]
+    assert page.blocks[0].start_sec == 1
+    assert page.blocks[0].source_url == (
+        "https://www.bilibili.com/video/BV1xx411c7mD?t=1"
+    )
+
+
 def test_cursor_is_revision_bound_and_pages_do_not_overlap():
     body = json3(cue(0, 1000, "one"), cue(60000, 1000, "two"), cue(120000, 1000, "three"))
     transcript, _ = service(content(), Store(body))
