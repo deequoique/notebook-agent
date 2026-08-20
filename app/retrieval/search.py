@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from sqlalchemy import desc, false, func, or_, select
 
+from app.browser_capture import timestamp_url
 from app.models import ContentItem, Segment
 
 
@@ -20,14 +21,30 @@ class Hit:
     text: str
     start_sec: float
     score: float
+    platform: str = "youtube"
+    source_url: str | None = None
 
     @property
     def url(self) -> str:
-        return f"https://youtu.be/{self.platform_id}?t={int(self.start_sec)}"
+        source_url = self.source_url or f"https://youtu.be/{self.platform_id}"
+        return timestamp_url(self.platform, source_url, self.start_sec)
 
 
 def _hits(rows) -> list[Hit]:
-    return [Hit(item.id, item.title, item.platform_id, segment.id, segment.text, float(segment.start_sec), float(score)) for segment, item, score in rows]
+    return [
+        Hit(
+            item.id,
+            item.title,
+            item.platform_id,
+            segment.id,
+            segment.text,
+            float(segment.start_sec),
+            float(score),
+            platform=item.platform,
+            source_url=item.url,
+        )
+        for segment, item, score in rows
+    ]
 
 
 def vector_search(

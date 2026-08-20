@@ -395,11 +395,13 @@
           "supported_platforms": {
             "default": [
               "youtube",
+              "bilibili",
               "ntu_kaltura"
             ],
             "items": {
               "enum": [
                 "youtube",
+                "bilibili",
                 "ntu_kaltura"
               ],
               "type": "string"

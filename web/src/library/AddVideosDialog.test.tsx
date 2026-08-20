@@ -12,7 +12,7 @@ describe("add videos dialog", () => {
     render(<AddVideosDialog open onClose={() => undefined} />);
 
     expect(showModal).toHaveBeenCalledOnce();
-    expect(screen.getByRole("dialog", { name: "添加 YouTube 视频" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "添加视频链接" })).toBeInTheDocument();
   });
 
   it("submits 1-10 trimmed URLs and renders per-item partial outcomes", async () => {
@@ -32,9 +32,9 @@ describe("add videos dialog", () => {
       </QueryClientProvider>,
     );
 
-    const dialog = screen.getByRole("dialog", { name: "添加 YouTube 视频" });
+    const dialog = screen.getByRole("dialog", { name: "添加视频链接" });
     await user.type(
-      within(dialog).getByLabelText("YouTube 链接，每行一个"),
+      within(dialog).getByLabelText("YouTube 或 Bilibili 链接，每行一个"),
       "https://youtu.be/dQw4w9WgXcQ\nhttps://example.com/nope",
     );
     await user.type(within(dialog).getByLabelText("备注（可选）"), "准备周末精读");
@@ -53,8 +53,8 @@ describe("add videos dialog", () => {
       "aria-live",
       "polite",
     );
-    expect(within(dialog).getByLabelText("YouTube 链接，每行一个")).toHaveAttribute("name", "urls");
-    expect(within(dialog).getByLabelText("YouTube 链接，每行一个")).toHaveAttribute("autocomplete", "off");
+    expect(within(dialog).getByLabelText("YouTube 或 Bilibili 链接，每行一个")).toHaveAttribute("name", "urls");
+    expect(within(dialog).getByLabelText("YouTube 或 Bilibili 链接，每行一个")).toHaveAttribute("autocomplete", "off");
     expect(within(dialog).getByLabelText("备注（可选）")).toHaveAttribute("name", "why-saved");
   });
 
@@ -70,7 +70,7 @@ describe("add videos dialog", () => {
       />,
     );
 
-    await user.type(screen.getByLabelText("YouTube 链接，每行一个"), "https://youtu.be/dQw4w9WgXcQ");
+    await user.type(screen.getByLabelText("YouTube 或 Bilibili 链接，每行一个"), "https://youtu.be/dQw4w9WgXcQ");
     await user.type(screen.getByLabelText("备注（可选）"), "准备周末精读");
     await user.click(screen.getByRole("button", { name: "产品调研" }));
     expect(screen.getByRole("button", { name: "产品调研" })).toHaveAttribute("aria-pressed", "true");
@@ -105,7 +105,7 @@ describe("add videos dialog", () => {
     await user.click(screen.getByRole("button", { name: "未归类" }));
     expect(screen.getByRole("button", { name: "未归类" })).toHaveAttribute("aria-pressed", "true");
 
-    await user.type(screen.getByLabelText("YouTube 链接，每行一个"), "https://youtu.be/dQw4w9WgXcQ");
+    await user.type(screen.getByLabelText("YouTube 或 Bilibili 链接，每行一个"), "https://youtu.be/dQw4w9WgXcQ");
     await user.click(screen.getByRole("button", { name: "添加并整理" }));
     expect(submit).toHaveBeenCalledWith({
       urls: ["https://youtu.be/dQw4w9WgXcQ"],
@@ -127,13 +127,13 @@ describe("add videos dialog", () => {
     const user = userEvent.setup();
     render(<AddVideosDialog open onClose={() => undefined} />);
 
-    const input = screen.getByLabelText("YouTube 链接，每行一个");
+    const input = screen.getByLabelText("YouTube 或 Bilibili 链接，每行一个");
     expect(input).toHaveAttribute("rows", "1");
     expect(input).toHaveClass("url-draft-input");
 
     await user.type(input, "https://youtu.be/first");
     await user.keyboard("{Enter}");
-    const links = screen.getByRole("list", { name: "已添加的 YouTube 链接" });
+    const links = screen.getByRole("list", { name: "已添加的视频链接" });
     expect(within(links).getByText("https://youtu.be/first")).toBeInTheDocument();
     expect(input).toHaveValue("");
 
@@ -153,7 +153,7 @@ describe("add videos dialog", () => {
 
     render(<AddVideosDialog open onClose={() => undefined} submitBatch={submit} />);
     await user.type(
-      screen.getByLabelText("YouTube 链接，每行一个"),
+      screen.getByLabelText("YouTube 或 Bilibili 链接，每行一个"),
       Array.from({ length: 11 }, (_, index) => `https://youtu.be/video${index}`).join("\n"),
     );
     await user.click(screen.getByRole("button", { name: "添加并整理" }));
@@ -173,7 +173,7 @@ describe("add videos dialog", () => {
       <AddVideosDialog open onClose={() => undefined} submitBatch={submit} />,
     );
 
-    await user.type(screen.getByLabelText("YouTube 链接，每行一个"), "https://youtu.be/dQw4w9WgXcQ");
+    await user.type(screen.getByLabelText("YouTube 或 Bilibili 链接，每行一个"), "https://youtu.be/dQw4w9WgXcQ");
     await user.type(screen.getByLabelText("备注（可选）"), "准备周末精读");
     await user.click(screen.getByRole("button", { name: "添加并整理" }));
     expect(await screen.findByText("已添加，等待整理")).toBeInTheDocument();
@@ -182,7 +182,7 @@ describe("add videos dialog", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     rerender(<AddVideosDialog open onClose={() => undefined} submitBatch={submit} />);
 
-    expect(screen.getByLabelText("YouTube 链接，每行一个")).toHaveValue("");
+    expect(screen.getByLabelText("YouTube 或 Bilibili 链接，每行一个")).toHaveValue("");
     expect(screen.getByLabelText("备注（可选）")).toHaveValue("");
     expect(screen.queryByText("已添加，等待整理")).not.toBeInTheDocument();
   });
@@ -213,7 +213,7 @@ describe("add videos dialog", () => {
       <AddVideosDialog open onClose={() => undefined} submitBatch={submit} />,
     );
 
-    await user.type(screen.getByLabelText("YouTube 链接，每行一个"), "https://youtu.be/dQw4w9WgXcQ");
+    await user.type(screen.getByLabelText("YouTube 或 Bilibili 链接，每行一个"), "https://youtu.be/dQw4w9WgXcQ");
     await user.click(screen.getByRole("button", { name: "添加并整理" }));
     rerender(<AddVideosDialog open={false} onClose={() => undefined} submitBatch={submit} />);
     await act(async () => {

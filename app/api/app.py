@@ -111,8 +111,11 @@ class HealthResponse(BaseModel):
 class CapabilitiesResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    supported_platforms: tuple[Literal["youtube", "ntu_kaltura"], ...] = (
+    supported_platforms: tuple[
+        Literal["youtube", "bilibili", "ntu_kaltura"], ...
+    ] = (
         "youtube",
+        "bilibili",
         "ntu_kaltura",
     )
     browser_companion: bool = True

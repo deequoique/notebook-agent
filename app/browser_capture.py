@@ -258,6 +258,8 @@ def timestamp_url(platform: str, url: str, seconds: float) -> str:
     query = dict(parse_qsl(parts.query, keep_blank_values=True))
     if platform == "youtube":
         query["t"] = str(max(0, int(seconds)))
+    elif platform == "bilibili":
+        query = {"t": str(max(0, int(seconds)))}
     elif platform == "ntu_kaltura":
         # NTULearnVideo's supported deep-link parameter has not been verified.
         # Preserve the safe canonical source instead of inventing one.

@@ -252,6 +252,9 @@ class Settings:
     youtube_proxy_url: str | None = field(
         default_factory=lambda: _env("YOUTUBE_PROXY_URL")
     )
+    bilibili_fetch_timeout_seconds: float = field(
+        default_factory=lambda: _env_float("BILIBILI_FETCH_TIMEOUT_SECONDS", 30.0)
+    )
 
     # --- MinIO (S3-compatible object storage) ---
     minio_endpoint_url: str = field(default_factory=lambda: _env("MINIO_ENDPOINT_URL", "http://localhost:9000"))
@@ -704,6 +707,8 @@ class Settings:
             raise ValueError("INGEST_CONTENT_LIMITS must be positive")
         if self.youtube_fetch_timeout_seconds <= 0:
             raise ValueError("YOUTUBE_FETCH_TIMEOUT_SECONDS must be positive")
+        if self.bilibili_fetch_timeout_seconds <= 0:
+            raise ValueError("BILIBILI_FETCH_TIMEOUT_SECONDS must be positive")
         _validate_youtube_proxy_url(self.youtube_proxy_url)
         if self.ingest_notification_interval_seconds <= 0:
             raise ValueError("INGEST_NOTIFICATION_INTERVAL_SECONDS must be positive")

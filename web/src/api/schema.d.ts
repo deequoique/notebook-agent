@@ -639,10 +639,11 @@ export interface components {
              * Supported Platforms
              * @default [
              *       "youtube",
+             *       "bilibili",
              *       "ntu_kaltura"
              *     ]
              */
-            supported_platforms: ("youtube" | "ntu_kaltura")[];
+            supported_platforms: ("youtube" | "bilibili" | "ntu_kaltura")[];
             /**
              * Transcript Pagination
              * @default true
