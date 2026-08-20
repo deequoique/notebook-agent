@@ -52,7 +52,7 @@ def _title(item: ContentItem) -> str:
 
 def _url(item: ContentItem, segment: Segment | None = None) -> str:
     if (
-        item.platform in {"youtube", "ntu_kaltura"}
+        item.platform in {"youtube", "bilibili", "ntu_kaltura"}
         and segment is not None
         and segment.start_sec is not None
     ):

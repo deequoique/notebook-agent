@@ -21,7 +21,14 @@ from sqlalchemy import and_, delete, func, inspect, or_, select, text
 
 from app.config import Settings, get_settings
 from app.browser_capture import parse_canonical_transcript
-from app.connectors.base import NeedsASR, NeedsExtension, TextResult, TransientFetchError
+from app.connectors.base import (
+    Connector,
+    NeedsASR,
+    NeedsExtension,
+    TextResult,
+    TransientFetchError,
+)
+from app.connectors.bilibili import BilibiliConnector
 from app.connectors.youtube import YouTubeConnector
 from app.db import get_session_factory
 from app.ingest.chunker import chunk
@@ -189,20 +196,26 @@ def _bounded_publish_options(
     }
 
 
-def _connector(url: str) -> YouTubeConnector:
+def _connector(url: str) -> Connector:
     settings = get_settings()
     # Resolve and export the verified CA before constructing the real
     # connector.  yt-dlp metadata and the isolated bounded subtitle child both
     # inherit this process environment; the later embedding composition keeps
     # its explicit SSLContext independently.
     configure_trusted_ca(settings.tls_ca_bundle)
-    connector = YouTubeConnector(
+    bilibili = BilibiliConnector(
+        max_transcript_bytes=settings.ingest_max_raw_transcript_bytes,
+        fetch_timeout_seconds=settings.bilibili_fetch_timeout_seconds,
+    )
+    if bilibili.match(url):
+        return bilibili
+    youtube = YouTubeConnector(
         max_transcript_bytes=settings.ingest_max_raw_transcript_bytes,
         fetch_timeout_seconds=settings.youtube_fetch_timeout_seconds,
         proxy_url=settings.youtube_proxy_url,
     )
-    if connector.match(url):
-        return connector
+    if youtube.match(url):
+        return youtube
     raise ValueError(f"unsupported URL: {url}")
 
 
@@ -347,7 +360,11 @@ def process_item(item_id: int, *, connector: Any | None = None, embedder: Embedd
         if len(preflight_chunks) > settings.ingest_max_segments_per_item:
             raise IngestLimitExceeded()
         if not pre_stored:
-            key = f"{item.user_id}/{item.platform}/{item.platform_id}/{hashlib.sha256(result.raw_body).hexdigest()}.json3"
+            raw_suffixes = {"json3": "json3", "srt": "srt"}
+            suffix = raw_suffixes.get(result.format)
+            if suffix is None:
+                raise ValueError("unsupported connector transcript format")
+            key = f"{item.user_id}/{item.platform}/{item.platform_id}/{hashlib.sha256(result.raw_body).hexdigest()}.{suffix}"
         db.refresh(item)
         if getattr(item, "deleted_at", None) is not None or getattr(item, "purge_claimed_at", None) is not None:
             _mark_item_deleted(db, item)
@@ -362,7 +379,11 @@ def process_item(item_id: int, *, connector: Any | None = None, embedder: Embedd
         if store is None:
             store = RawObjectStore()
         if not pre_stored:
-            store.put(key, result.raw_body, "application/json")
+            content_types = {
+                "json3": "application/json",
+                "srt": "application/x-subrip",
+            }
+            store.put(key, result.raw_body, content_types[result.format])
         db.refresh(item)
         if getattr(item, "deleted_at", None) is not None or getattr(item, "purge_claimed_at", None) is not None:
             _delete_object_best_effort(store, key)

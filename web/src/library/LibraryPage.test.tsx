@@ -177,7 +177,7 @@ describe("library page", () => {
     expect(within(filters).getByRole("button", { name: "AI_入门" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "添加视频" }));
-    const dialog = screen.getByRole("dialog", { name: "添加 YouTube 视频" });
+    const dialog = screen.getByRole("dialog", { name: "添加视频链接" });
     expect(within(dialog).getByRole("button", { name: "产品调研" })).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "AI_入门" })).toBeInTheDocument();
   });

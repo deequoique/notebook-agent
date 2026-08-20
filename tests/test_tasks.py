@@ -678,6 +678,78 @@ def test_long_connector_transcript_keeps_per_cue_semantic_embedding():
     assert 0 < len(embedder.calls[1]) < cue_count
 
 
+def test_bilibili_srt_uses_format_specific_object_key_and_content_type():
+    item = type(
+        "Item",
+        (),
+        {
+            "id": 44,
+            "user_id": 7,
+            "platform": "bilibili",
+            "platform_id": "BV1xx411c7mD",
+            "url": "https://www.bilibili.com/video/BV1xx411c7mD",
+            "chapters": [],
+            "state": "pending",
+            "raw_object_key": None,
+            "raw_format": "json3",
+            "content_hash": None,
+            "text_source": "none",
+            "lang": None,
+            "fail_reason": None,
+            "deleted_at": None,
+            "purge_claimed_at": None,
+        },
+    )()
+
+    class DB:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def get(self, model, _item_id):
+            assert model is ContentItem
+            return item
+        def commit(self): return None
+        def refresh(self, _value): return None
+        def execute(self, _statement): return None
+        def add(self, _value): return None
+
+    body = b"1\n00:00:00,000 --> 00:00:01,000\nhello\n"
+
+    class Connector:
+        platform = "bilibili"
+
+        def fetch_meta(self, _platform_id): return None
+        def fetch_text(self, _platform_id):
+            return TextResult(
+                body,
+                [Cue(0, 1, "hello")],
+                "official_cc",
+                "en",
+                "srt",
+            )
+
+    class Store:
+        calls = []
+
+        def put(self, *args): self.calls.append(args)
+
+    class Embedder:
+        def embed(self, values): return [[1.0, 0.0] for _ in values]
+
+    store = Store()
+    state = process_item(
+        item.id,
+        connector=Connector(),
+        embedder=Embedder(),
+        object_store=store,
+        session_factory=lambda: DB(),
+    )
+
+    assert state == "ready"
+    assert item.raw_format == "srt"
+    assert item.raw_object_key.endswith(".srt")
+    assert store.calls == [(item.raw_object_key, body, "application/x-subrip")]
+
+
 @pytest.mark.parametrize(
     "result",
     [

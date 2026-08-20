@@ -20,7 +20,7 @@ export function LibraryEmptyState({ trueFirstEmpty, onAdd }: EmptyProps) {
       <BrandLogo className="agent-mark" />
       <p className="eyebrow">开始使用</p>
       <h2>资料库还是空的</h2>
-      <p>可以添加 YouTube 链接；NTULearn 和浏览器内的 YouTube 字幕也可通过浏览器伴侣保存。</p>
+      <p>可以添加 YouTube 或 Bilibili 普通视频链接；NTULearn 和浏览器内的 YouTube 字幕也可通过浏览器伴侣保存。</p>
       {onAdd ? <button className="button button--primary" onClick={onAdd}>添加第一个视频</button> : null}
     </section>
   );

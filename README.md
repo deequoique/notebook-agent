@@ -4,7 +4,7 @@
 
 > Your private knowledge, available wherever you chat.
 
-Notebook Agent turns saved YouTube videos into a private, searchable knowledge
+Notebook Agent turns saved YouTube and Bilibili videos into a private, searchable knowledge
 library. Ask in natural language through MCP, the browser application, or an
 optional Telegram/WeChat bridge; answers are grounded in retrieved excerpts
 and timestamped source links.
@@ -13,15 +13,16 @@ and timestamped source links.
 
 ## What it does
 
-1. Save an explicit YouTube URL.
+1. Save an explicit YouTube or Bilibili video URL.
 2. Fetch its metadata and captions asynchronously, archive the source, split
    it into semantic chunks, and index embeddings.
 3. Ask a question in your own knowledge space.
 4. Receive an evidence-backed answer with the original video location.
 
-YouTube is the only end-to-end ingestion connector currently supported.
-Bilibili and WeChat articles are represented in the data model, but their
-connectors are not available yet.
+YouTube and ordinary Bilibili video URLs have server-side ingestion connectors.
+Bilibili ingestion uses only captions visible without a persisted account
+cookie; videos without a server-visible caption remain available for a later
+browser-companion or ASR path. WeChat article ingestion is not available yet.
 
 ## Highlights
 

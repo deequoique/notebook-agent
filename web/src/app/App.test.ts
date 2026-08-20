@@ -202,7 +202,7 @@ describe("private cache boundary", () => {
       }
       if (path === "/api/v1/capabilities") {
         return new Response(JSON.stringify({
-          supported_platforms: ["youtube", "ntu_kaltura"],
+          supported_platforms: ["youtube", "bilibili", "ntu_kaltura"],
           browser_companion: true,
           web_login_channels: ["email"],
           save_enabled: true,

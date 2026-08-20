@@ -30,6 +30,7 @@ interface VideoDetailViewProps {
 function timestampUrl(url: string, seconds: number, platform: string): string {
   const parsed = new URL(url);
   if (platform === "ntu_kaltura") return `${parsed.origin}${parsed.pathname}`;
+  if (platform === "bilibili") parsed.search = "";
   parsed.searchParams.set("t", String(Math.max(0, Math.floor(seconds))));
   return parsed.toString();
 }
@@ -88,7 +89,9 @@ export function VideoDetailView({
   const nextCursor = transcriptPages.at(-1)?.next_cursor ?? null;
   const actions = new Set(item.available_actions);
   const language = formatLanguage(item.lang);
-  const platformLabel = item.platform === "ntu_kaltura" ? "NTULearn" : "YouTube";
+  const platformLabel = item.platform === "ntu_kaltura"
+    ? "NTULearn"
+    : item.platform === "bilibili" ? "Bilibili" : "YouTube";
   const collectionSuffixLength = savedContext.collections.reduce(
     (total, name) => total + name.length + 1,
     Math.max(0, savedContext.collections.length - 1),
@@ -132,6 +135,7 @@ export function VideoDetailView({
           </div>
           {actionError ? <p className="inline-error" role="alert" aria-label="视频操作失败">操作未完成，请稍后重试。</p> : null}
           {item.error_code === "youtube_rate_limited" ? <p className="inline-error">服务器暂时无法访问 YouTube。你可以打开原视频，使用 <RouteLink to="/account/browser-companion">浏览器伴侣</RouteLink> 从当前浏览器保存字幕。</p> : null}
+          {item.error_code === "bilibili_rate_limited" ? <p className="inline-error">服务器暂时无法访问 Bilibili，请稍后重新整理。</p> : null}
         </div>
       </header>
 

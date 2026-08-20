@@ -480,6 +480,7 @@ event + delivery ledger；旧 `ingest-completion` queue 不再生产，也不依
 | `INGEST_MAX_SEGMENTS_PER_ITEM` | worker | `5000` | 单条最终检索片段数上限 | 否 | worker、同步 ingest CLI |
 | `INGEST_MAX_EMBEDDING_CHARS_PER_ITEM` | worker | `2000000` | 单条所有 embedding 输入字符的累计上限 | 否 | worker、同步 ingest CLI |
 | `YOUTUBE_FETCH_TIMEOUT_SECONDS` | YouTube connector | `30` | metadata 与字幕获取的单调用总时限 | 否 | worker、同步 ingest CLI |
+| `BILIBILI_FETCH_TIMEOUT_SECONDS` | Bilibili connector | `30` | 元数据与字幕解析的单调用总时限 | 否 | worker、同步 ingest CLI |
 | `INGEST_NOTIFICATION_INTERVAL_SECONDS` | Celery beat | `10` | source-channel poll interval; positive | 否 | beat |
 | `INGEST_NOTIFICATION_BATCH_SIZE` | maintenance worker | `20` | bounded delivery claims | 否 | worker |
 | `INGEST_NOTIFICATION_CLAIM_TIMEOUT_SECONDS` | maintenance worker | `300` | stale claim recovery | 否 | worker |
