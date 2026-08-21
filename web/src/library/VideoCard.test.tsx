@@ -33,13 +33,17 @@ describe("video card", () => {
   it("shows readable metadata and a server-derived lifecycle", () => {
     const { container } = render(<MemoryRouter><VideoCard item={baseItem} /></MemoryRouter>);
 
-    expect(screen.getByRole("link", { name: /一段值得反复看的访谈/ })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "一段值得反复看的访谈，查看详情" })).toHaveAttribute(
       "href",
       "/videos/video-public",
     );
     expect(screen.getByText("12:34")).toBeInTheDocument();
     expect(screen.getByText("可阅读")).toBeInTheDocument();
     expect(screen.getByText("学习提问方式")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /编辑《一段值得反复看的访谈》的保存说明和收藏夹/ })).toHaveAttribute(
+      "href",
+      "/videos/video-public#saved-context",
+    );
     expect(container.querySelector("img")).toHaveAttribute("width", "960");
     expect(container.querySelector("img")).toHaveAttribute("height", "540");
   });
@@ -62,7 +66,7 @@ describe("video card", () => {
         </MemoryRouter>,
       );
 
-      await user.click(screen.getByRole("link", { name: /一段值得反复看的访谈/ }));
+      await user.click(screen.getByRole("link", { name: "一段值得反复看的访谈，查看详情" }));
 
       expect(startViewTransition).toHaveBeenCalledOnce();
       expect(screen.getByRole("heading", { name: "视频详情" })).toBeInTheDocument();

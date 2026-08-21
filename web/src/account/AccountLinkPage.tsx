@@ -112,7 +112,7 @@ export function AccountLinkPage({
   }
 
   return (
-    <section className="account-link-page" aria-labelledby="account-link-title">
+    <section className="account-link-page telegram-link-page" aria-labelledby="account-link-title">
       <header className="account-link-page__heading">
         <p className="eyebrow">账户设置</p>
         <h1 id="account-link-title">绑定 Telegram</h1>
@@ -123,73 +123,98 @@ export function AccountLinkPage({
 
       <div className="account-link-grid">
         <section className="account-link-card" aria-labelledby="account-link-web-title">
-          <p className="step-number" aria-hidden="true">01</p>
-          <h2 id="account-link-web-title">从 Web 发起绑定</h2>
-          <p>生成一次性绑定码，然后在配置好的 Telegram Bot 私聊中发送完整指令。</p>
+          <header className="account-link-card__header">
+            <div className="account-link-card__meta" aria-hidden="true">
+              <p className="step-number">01</p>
+              <span>WEB → TELEGRAM</span>
+            </div>
+            <h2 id="account-link-web-title">从 Web 发起绑定</h2>
+            <p>在这里生成一次性指令，再发送给 Telegram Bot。</p>
+          </header>
           <p className="account-link-bot">
-            Telegram Bot：
+            <span>同一个 Telegram Bot</span>
             <a
               href={TELEGRAM_BOT_URL}
               target="_blank"
               rel="noopener noreferrer"
               aria-label={`${TELEGRAM_BOT_HANDLE}（在新标签页打开）`}
             >
-              {TELEGRAM_BOT_HANDLE}
+              {TELEGRAM_BOT_HANDLE}<span aria-hidden="true"> ↗</span>
             </a>
           </p>
-          <button
-            className="button button--primary button--wide"
-            type="button"
-            onClick={generateToken}
-            disabled={createMutation.isPending}
-          >
-            {createMutation.isPending
-              ? "正在生成…"
-              : generatedToken
-                ? "重新生成绑定码"
-                : "生成 Telegram 绑定码"}
-          </button>
-          {command ? (
-            <div className="account-link-command" aria-live="polite">
-              <p>在 Telegram Bot 私聊中发送：</p>
-              <code ref={commandRef} tabIndex={0}>{command}</code>
+          <div className="account-link-action-panel">
+            <div className="field account-link-command-field">
+              <span className="account-link-field-label" id="web-link-command-label">Telegram 绑定指令</span>
+              <div
+                className={`account-link-token-slot${command ? " has-value" : ""}`}
+                aria-labelledby="web-link-command-label"
+                aria-live="polite"
+              >
+                {command ? (
+                  <code ref={commandRef} tabIndex={0}>{command}</code>
+                ) : (
+                  <span>生成后将在这里显示一次性 /link 指令</span>
+                )}
+              </div>
+              <p className="field-help">
+                {command
+                  ? "绑定码短期有效，只能使用一次，请勿转发给他人。"
+                  : "指令只在本页临时显示；离开页面后不会保留。"}
+              </p>
+            </div>
+            <button
+              className="button button--primary button--wide"
+              type="button"
+              onClick={generateToken}
+              disabled={createMutation.isPending}
+            >
+              {createMutation.isPending
+                ? "正在生成…"
+                : generatedToken
+                  ? "重新生成绑定码"
+                  : "生成 Telegram 绑定码"}
+            </button>
+            {command ? (
               <button className="button button--quiet button--wide" type="button" onClick={() => void copyCommand()}>
                 复制指令
               </button>
-              {copyStatus === "copied" ? (
-                <p className="account-link-status" role="status">指令已复制，可以粘贴到 Telegram Bot。</p>
-              ) : null}
-              {copyStatus === "fallback" ? (
-                <p className="account-link-status" role="status">浏览器未允许复制，请选中上方指令后手动复制。</p>
-              ) : null}
-              <p className="field-help">
-                绑定码短期有效，只能使用一次，请勿转发给他人。重新生成不会在页面上声明旧码已撤销，最终状态以后端为准。
-              </p>
-            </div>
-          ) : (
-            <p className="field-help">绑定码短期有效，只能使用一次，请勿转发给他人。</p>
-          )}
+            ) : null}
+            {copyStatus === "copied" ? (
+              <p className="account-link-status" role="status">指令已复制，可以粘贴到 Telegram Bot。</p>
+            ) : null}
+            {copyStatus === "fallback" ? (
+              <p className="account-link-status" role="status">浏览器未允许复制，请选中上方指令后手动复制。</p>
+            ) : null}
+          </div>
+          {command ? (
+            <p className="field-help account-link-token-note">
+              重新生成不会在页面上声明旧码已撤销，最终状态以后端为准。
+            </p>
+          ) : null}
           {createError ? <p className="inline-error" role="alert">{createError}</p> : null}
         </section>
 
         <section className="account-link-card" aria-labelledby="account-link-telegram-title">
-          <p className="step-number" aria-hidden="true">02</p>
-          <h2 id="account-link-telegram-title">从 Telegram 发起绑定</h2>
-          <p>
-            先在 Telegram Bot 私聊中发送 <code>/link web</code>，再把 Bot 返回的绑定码粘贴到这里。
-          </p>
+          <header className="account-link-card__header">
+            <div className="account-link-card__meta" aria-hidden="true">
+              <p className="step-number">02</p>
+              <span>TELEGRAM → WEB</span>
+            </div>
+            <h2 id="account-link-telegram-title">从 Telegram 发起绑定</h2>
+            <p>先向 Bot 发送 <code>/link web</code>，再把返回的绑定码粘贴到这里。</p>
+          </header>
           <p className="account-link-bot">
-            打开 Telegram Bot：
+            <span>同一个 Telegram Bot</span>
             <a
               href={TELEGRAM_BOT_URL}
               target="_blank"
               rel="noopener noreferrer"
               aria-label={`${TELEGRAM_BOT_HANDLE}（在新标签页打开）`}
             >
-              {TELEGRAM_BOT_HANDLE}
+              {TELEGRAM_BOT_HANDLE}<span aria-hidden="true"> ↗</span>
             </a>
           </p>
-          <form className="account-link-form" onSubmit={submitToken} noValidate>
+          <form className="account-link-form account-link-action-panel" onSubmit={submitToken} noValidate>
             <div className="field">
               <label htmlFor="telegram-link-token">Telegram 绑定码</label>
               <input

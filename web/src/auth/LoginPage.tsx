@@ -197,7 +197,7 @@ export function LoginPage({
             download
             href={BROWSER_COMPANION_DOWNLOAD_URL}
           >
-            下载浏览器伴侣
+            获取浏览器插件
           </a>
         </div>
         <p className="eyebrow">你的私人视频资料库</p>

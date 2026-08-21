@@ -102,6 +102,7 @@ export function createSessionQueryClient(session: SessionInfo): QueryClient {
 function ProtectedLayout({ rotateClient }: { rotateClient: () => void }) {
   const client = useQueryClient();
   const navigate = useRouteNavigate();
+  const location = useLocation();
   const session = useQuery({
     queryKey: ["session"],
     queryFn: getSession,
@@ -115,7 +116,10 @@ function ProtectedLayout({ rotateClient }: { rotateClient: () => void }) {
   if (session.isPending) {
     return <main className="route-loading" aria-label="正在验证登录" aria-busy="true"><BrandLogo className="wordmark__sigil" /></main>;
   }
-  if (session.isError) return <Navigate to="/login" replace />;
+  if (session.isError) {
+    const returnTo = browserCompanionReturnTo(location.pathname, location.search);
+    return <Navigate to="/login" replace state={returnTo ? { returnTo } : undefined} />;
+  }
   return (
     <AppShell
       loginChannel={session.data.login_channel}
