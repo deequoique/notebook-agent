@@ -9,10 +9,13 @@ boundary.
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Annotated, Protocol
+from typing import Annotated, AsyncIterator, Literal, Protocol
 from uuid import uuid4
 
 from fastapi import (
@@ -24,6 +27,7 @@ from fastapi import (
     Response,
     Security,
 )
+from fastapi.responses import StreamingResponse
 from fastapi.security import APIKeyCookie
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import and_, delete, or_, select
@@ -44,6 +48,8 @@ _MAX_MESSAGE_TEXT = 16_000
 _DEFAULT_HISTORY_LIMIT = 30
 _MAX_HISTORY_LIMIT = 50
 _WEB_AGENT_TIMEOUT_GRACE_SECONDS = 10.0
+_STREAM_MEDIA_TYPE = "text/event-stream"
+_STREAM_UNAVAILABLE_STATUS = 406
 _PRIVATE_RESULT_KEYS = frozenset(
     {
         "id",
@@ -55,6 +61,8 @@ _PRIVATE_RESULT_KEYS = frozenset(
         "tenant_id",
     }
 )
+
+logger = logging.getLogger(__name__)
 
 _SESSION_COOKIE_SCHEMA = APIKeyCookie(
     name="__Host-kb_session",
@@ -127,6 +135,103 @@ class ConversationResponse(BaseModel):
     action_results: list[dict] = Field(default_factory=list)
     thread_id: str | None = None
     error_code: str | None = None
+
+
+class ConversationStreamEvent(BaseModel):
+    """The small, public event envelope used by the browser SSE client.
+
+    The event type and activity values are intentionally closed sets.  Agent
+    provider chunks, tool arguments, diagnostics, and hidden reasoning never
+    cross this boundary.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal[
+        "started",
+        "activity",
+        "text_delta",
+        "completed",
+        "error",
+        "cancelled",
+    ]
+    request_id: str = Field(min_length=1, max_length=64)
+    message_id: str = Field(min_length=1, max_length=_MAX_MESSAGE_ID)
+    sequence: int = Field(ge=1)
+    activity: Literal[
+        "preparing",
+        "retrieving",
+        "composing",
+        "completed",
+        "failed",
+        "cancelled",
+    ] | None = None
+    text: str | None = None
+    response: ConversationResponse | None = None
+    error_code: str | None = None
+    message: str | None = None
+
+
+_STREAM_ACTIVITY_LABELS: dict[str, str] = {
+    "preparing": "正在准备回答…",
+    "retrieving": "正在检索资料库…",
+    "composing": "正在整理答案…",
+    "completed": "回答已完成",
+    "failed": "这次检索未能完成",
+    "cancelled": "请求已取消",
+}
+_SAFE_STREAM_ERROR_CODES = frozenset(
+    {
+        "answer_unavailable",
+        "cancelled",
+        "delete_in_progress",
+        "identity_error",
+        "link_account_disabled",
+        "link_channel_current",
+        "link_channel_unsupported",
+        "link_merge_busy",
+        "link_merge_conflict",
+        "link_source_unbound",
+        "link_token_expired",
+        "link_token_invalid",
+        "link_token_used",
+        "link_usage",
+        "no_evidence",
+        "read_unavailable",
+        "request_failed",
+        "retrieval_unavailable",
+        "runtime_error",
+        "thread_missing",
+        "timeout",
+        "todo_incomplete",
+        "web_login_unavailable",
+        "web_login_usage",
+    }
+)
+
+
+def _safe_stream_error_code(value: object) -> str:
+    return value if isinstance(value, str) and value in _SAFE_STREAM_ERROR_CODES else "request_failed"
+
+
+def _safe_stream_response(response: ConversationResponse) -> ConversationResponse:
+    """Keep response error metadata inside the public stream allow-list."""
+
+    if response.error_code is None:
+        return response
+    return response.model_copy(
+        update={"error_code": _safe_stream_error_code(response.error_code)}
+    )
+
+
+def _encode_stream_event(event: ConversationStreamEvent) -> str:
+    """Serialize one public event as a complete SSE record."""
+
+    payload = event.model_dump(mode="json", exclude_none=True)
+    return (
+        f"event: {event.type}\n"
+        f"data: {json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}\n\n"
+    )
 
 
 class ConversationHistoryItemResponse(BaseModel):
@@ -395,6 +500,8 @@ def build_conversation_router(
         conversation_id: str,
         message_id: str,
         text: str,
+        *,
+        request_id: str | None = None,
     ) -> ChannelEnvelope:
         identity = browser_identity(session)
         tenant = identity.tenant
@@ -405,7 +512,7 @@ def build_conversation_router(
             conversation_id,
             message_id,
             text,
-            request_id=uuid4().hex,
+            request_id=request_id or uuid4().hex,
         )
 
     @router.get(
@@ -595,6 +702,237 @@ def build_conversation_router(
         return project_answer(answer)
 
     @router.post(
+        "/conversations/{conversation_id}/messages/stream",
+        response_class=StreamingResponse,
+        responses={
+            200: {
+                "description": "Server-sent public conversation events",
+                "content": {"text/event-stream": {}},
+            },
+            401: {"model": ErrorResponse},
+            406: {"model": ErrorResponse},
+            422: {"model": ErrorResponse},
+            503: {"model": ErrorResponse},
+        },
+    )
+    async def send_message_stream(
+        conversation_id: str,
+        payload: MessageInput,
+        _csrf_token: CsrfHeader,
+        session: object = Depends(authenticated_session),
+    ) -> StreamingResponse:
+        """Stream a browser-safe lifecycle while retaining JSON compatibility.
+
+        The channel service still owns identity resolution, idempotency,
+        persistence, and answer projection.  This route only wraps that one
+        execution in a bounded, typed SSE envelope; it never starts a second
+        Agent task or persistence path.
+        """
+
+        channel = service_or_unavailable()
+        if not 1 <= len(conversation_id.strip()) <= _MAX_CONVERSATION_ID:
+            raise HTTPException(status_code=422, detail="validation_error")
+        if not bool(getattr(settings, "agent_streaming_enabled", True)):
+            raise HTTPException(
+                status_code=_STREAM_UNAVAILABLE_STATUS,
+                detail="streaming_disabled",
+            )
+
+        request_id = uuid4().hex
+        envelope = web_envelope(
+            session,
+            conversation_id,
+            payload.message_id,
+            payload.text,
+            request_id=request_id,
+        )
+        started_at = time.monotonic()
+
+        async def events() -> AsyncIterator[str]:
+            sequence = 0
+
+            def next_event(
+                event_type: Literal[
+                    "started",
+                    "activity",
+                    "text_delta",
+                    "completed",
+                    "error",
+                    "cancelled",
+                ],
+                *,
+                activity: str | None = None,
+                text: str | None = None,
+                response: ConversationResponse | None = None,
+                error_code: str | None = None,
+                message: str | None = None,
+            ) -> ConversationStreamEvent:
+                nonlocal sequence
+                sequence += 1
+                safe_activity = (
+                    activity if activity in _STREAM_ACTIVITY_LABELS else None
+                )
+                return ConversationStreamEvent(
+                    type=event_type,
+                    request_id=request_id,
+                    message_id=payload.message_id,
+                    sequence=sequence,
+                    activity=safe_activity,
+                    text=text,
+                    response=response,
+                    error_code=_safe_stream_error_code(error_code)
+                    if error_code is not None
+                    else None,
+                    message=message,
+                )
+
+            def emit(
+                event: ConversationStreamEvent,
+                *,
+                outcome: str | None = None,
+            ) -> str:
+                elapsed_ms = int((time.monotonic() - started_at) * 1000)
+                logger.info(
+                    "conversation_stream_lifecycle request_id=%s event_type=%s "
+                    "outcome=%s elapsed_ms=%d",
+                    request_id,
+                    event.type,
+                    outcome or "in_progress",
+                    elapsed_ms,
+                )
+                return _encode_stream_event(event)
+
+            yield emit(
+                next_event(
+                    "started",
+                    activity="preparing",
+                    message=_STREAM_ACTIVITY_LABELS["preparing"],
+                )
+            )
+            yield emit(
+                next_event(
+                    "activity",
+                    activity="retrieving",
+                    message=_STREAM_ACTIVITY_LABELS["retrieving"],
+                )
+            )
+            try:
+                answer = await asyncio.wait_for(
+                    channel.handle(envelope),
+                    timeout=float(getattr(settings, "agent_timeout_seconds", 30.0)),
+                )
+                projected = _safe_stream_response(project_answer(answer))
+                if projected.status == "failed":
+                    yield emit(
+                        next_event(
+                            "activity",
+                            activity="failed",
+                            message=_STREAM_ACTIVITY_LABELS["failed"],
+                        )
+                    )
+                    yield emit(
+                        next_event(
+                            "error",
+                            activity="failed",
+                            response=projected,
+                            error_code=projected.error_code,
+                            message="请求未能完成，请稍后重试。",
+                        ),
+                        outcome="failed",
+                    )
+                    return
+                yield emit(
+                    next_event(
+                        "activity",
+                        activity="composing",
+                        message=_STREAM_ACTIVITY_LABELS["composing"],
+                    )
+                )
+                # Provider-level token streaming is intentionally not
+                # fabricated here.  The whole-answer compatibility service
+                # produces one safe delta, which still exercises the same
+                # public protocol and keeps persistence single-shot.
+                if projected.text:
+                    yield emit(
+                        next_event("text_delta", text=projected.text)
+                    )
+                yield emit(
+                    next_event(
+                        "completed",
+                        activity="completed",
+                        response=projected,
+                        message=_STREAM_ACTIVITY_LABELS["completed"],
+                    ),
+                    outcome="completed",
+                )
+            except asyncio.CancelledError:
+                cancelled = ConversationResponse(
+                    status="failed",
+                    text="请求已取消。",
+                    action_results=[],
+                    error_code="cancelled",
+                )
+                # A disconnect may prevent this final record reaching the
+                # client, but the event remains deterministic for direct
+                # ASGI/test consumers and never leaves a pending UI state.
+                yield emit(
+                    next_event(
+                        "cancelled",
+                        activity="cancelled",
+                        response=cancelled,
+                        error_code="cancelled",
+                        message=_STREAM_ACTIVITY_LABELS["cancelled"],
+                    ),
+                    outcome="cancelled",
+                )
+            except TimeoutError:
+                failed = ConversationResponse(
+                    status="failed",
+                    text="请求超时，请稍后重试。",
+                    action_results=[],
+                    error_code="timeout",
+                )
+                yield emit(
+                    next_event(
+                        "error",
+                        activity="failed",
+                        response=failed,
+                        error_code="timeout",
+                        message="请求超时，请稍后重试。",
+                    ),
+                    outcome="timeout",
+                )
+            except Exception:
+                # Do not copy exception details into the browser or logs.
+                failed = ConversationResponse(
+                    status="failed",
+                    text="请求无法完成，请稍后重试。",
+                    action_results=[],
+                    error_code="request_failed",
+                )
+                yield emit(
+                    next_event(
+                        "error",
+                        activity="failed",
+                        response=failed,
+                        error_code="request_failed",
+                        message="请求无法完成，请稍后重试。",
+                    ),
+                    outcome="failed",
+                )
+
+        return StreamingResponse(
+            events(),
+            media_type=_STREAM_MEDIA_TYPE,
+            headers={
+                "Cache-Control": "no-cache, no-store",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+                "X-Agent-Streaming": "enabled",
+            },
+        )
+
+    @router.post(
         "/conversations/{conversation_id}/reset",
         response_model=ConversationResponse,
         responses={
@@ -716,6 +1054,7 @@ __all__ = [
     "ConversationHistoryItemResponse",
     "ConversationHistoryPageResponse",
     "ConversationResponse",
+    "ConversationStreamEvent",
     "ConversationTurnResponse",
     "ConversationTurnsResponse",
     "LinkTokenInput",

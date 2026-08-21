@@ -50,6 +50,7 @@ export type TranscriptPage = Schemas["TranscriptPageResponse"];
 
 export type ConversationCitation = Schemas["ConversationCitationResponse"];
 export type ConversationResponse = Schemas["ConversationResponse"];
+export type ConversationStreamEvent = Schemas["ConversationStreamEvent"];
 export type ConversationHistoryItem = Schemas["ConversationHistoryItemResponse"];
 export type ConversationHistoryPage = Schemas["ConversationHistoryPageResponse"];
 export type ConversationTurn = Schemas["ConversationTurnResponse"];

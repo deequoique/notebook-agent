@@ -1,18 +1,22 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 
 import {
   getCapabilities,
+  ConversationStreamError,
   getConversationTurns,
   listConversations,
   deleteConversation,
   resetConversation,
   sendConversationMessage,
+  StreamingUnavailableError,
 } from "../api/client";
 import type {
   Capabilities,
   ConversationHistoryPage,
   ConversationResponse,
+  ConversationStreamEvent,
   ConversationTurns,
 } from "../api/contracts";
 import { ApiError } from "../api/client";
@@ -25,6 +29,11 @@ interface ChatPageProps {
   fetchTurns?: (threadId: string) => Promise<ConversationTurns>;
   reset?: (conversationId: string) => Promise<ConversationResponse>;
   send?: (conversationId: string, input: { message_id: string; text: string }) => Promise<ConversationResponse>;
+  sendStream?: (
+    conversationId: string,
+    input: { message_id: string; text: string },
+    onEvent: (event: ConversationStreamEvent) => void,
+  ) => Promise<ConversationResponse>;
   deleteThread?: (threadId: string) => Promise<void>;
   createId?: () => string;
 }
@@ -81,12 +90,26 @@ const fallbackQuestions = [
   "请列出相关片段和可跳转的时间点。",
 ];
 
+const ACTIVITY_COPY: Record<string, string> = {
+  preparing: "正在准备回答…",
+  retrieving: "正在检索资料库…",
+  composing: "正在整理答案…",
+  completed: "回答已完成",
+  failed: "这次检索未能完成",
+  cancelled: "请求已取消",
+};
+
+function activityCopy(event: ConversationStreamEvent): string {
+  return event.activity ? (ACTIVITY_COPY[event.activity] ?? "正在处理…") : "正在处理…";
+}
+
 export function ChatPage({
   loadCapabilities = getCapabilities,
   fetchHistory = () => listConversations(),
   fetchTurns = getConversationTurns,
   reset = resetConversation,
   send = sendConversationMessage,
+  sendStream,
   deleteThread = deleteConversation,
   createId = () => crypto.randomUUID(),
 }: ChatPageProps) {
@@ -95,6 +118,9 @@ export function ChatPage({
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
+  const [pendingActivity, setPendingActivity] = useState("正在准备回答…");
+  const [pendingAnswer, setPendingAnswer] = useState("");
+  const [pendingStatus, setPendingStatus] = useState<"streaming" | "failed">("streaming");
   const [openMenuThreadId, setOpenMenuThreadId] = useState<string | null>(null);
   const [confirmingThreadId, setConfirmingThreadId] = useState<string | null>(null);
   const attemptedEmptyBootstrap = useRef(false);
@@ -135,18 +161,74 @@ export function ChatPage({
     },
   });
   const sendMessage = useMutation({
-    mutationFn: async ({ conversationId, text }: { conversationId: string; text: string }) => (
-      send(conversationId, { message_id: createId(), text })
-    ),
+    mutationFn: async ({ conversationId, text }: { conversationId: string; text: string }) => {
+      const input = { message_id: createId(), text };
+      if (!sendStream) return send(conversationId, input);
+      try {
+        return await sendStream(conversationId, input, (event) => {
+          // A fetch reader can deliver multiple complete SSE records in one
+          // microtask. Flush each public event at the boundary so activity
+          // and the first safe delta are paintable before the terminal
+          // response, instead of being collapsed into one React batch.
+          flushSync(() => {
+            if (event.type === "started" || event.type === "activity") {
+              setPendingActivity(activityCopy(event));
+            } else if (event.type === "text_delta") {
+              setPendingActivity("正在整理答案…");
+              if (event.text) setPendingAnswer((current) => current + event.text);
+            } else if (event.type === "completed") {
+              setPendingActivity("回答已完成");
+              if (event.response?.text) setPendingAnswer(event.response.text);
+            } else if (event.type === "error" || event.type === "cancelled") {
+              setPendingStatus("failed");
+              setPendingActivity(activityCopy(event));
+              setPendingAnswer(
+                event.response?.text
+                  || (event.type === "cancelled" ? "请求已取消。" : "请求未能完成，请稍后重试。"),
+              );
+            }
+          });
+        });
+      } catch (error) {
+        // A known server without SSE support is the only safe automatic
+        // fallback. A broken stream may already have persisted this message,
+        // so it remains a visible failed turn instead of being resubmitted.
+        if (error instanceof StreamingUnavailableError) {
+          setPendingActivity("正在检索资料库…");
+          setPendingAnswer("");
+          return send(conversationId, input);
+        }
+        throw error;
+      }
+    },
     onSuccess: async () => {
       setDraft("");
       setPendingQuestion(null);
+      setPendingAnswer("");
+      setPendingActivity("正在准备回答…");
+      setPendingStatus("streaming");
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["conversations"] }),
         queryClient.invalidateQueries({ queryKey: ["conversation", selectedThreadId] }),
       ]);
     },
-    onError: () => setPendingQuestion(null),
+    onError: (error) => {
+      if (error instanceof ConversationStreamError) {
+        setPendingStatus("failed");
+        setPendingActivity(
+          error.code === "cancelled"
+            ? "请求已取消"
+            : error.response
+              ? "这次检索未能完成"
+              : "流式连接中断，请重试",
+        );
+        if (error.response?.text) setPendingAnswer(error.response.text);
+        return;
+      }
+      setPendingQuestion(null);
+      setPendingAnswer("");
+      setPendingStatus("failed");
+    },
   });
   const deleteConversationMutation = useMutation({
     mutationFn: async (threadId: string) => {
@@ -164,6 +246,9 @@ export function ChatPage({
       setSelectedThreadId(null);
       setSelectedConversationId(null);
       setPendingQuestion(null);
+      setPendingAnswer("");
+      setPendingActivity("正在准备回答…");
+      setPendingStatus("streaming");
       await queryClient.invalidateQueries({ queryKey: ["conversations"] });
     },
   });
@@ -225,6 +310,9 @@ export function ChatPage({
     if (!chatEnabled) return;
     setDraft("");
     setPendingQuestion(null);
+    setPendingAnswer("");
+    setPendingActivity("正在准备回答…");
+    setPendingStatus("streaming");
     setSelectedThreadId(null);
     setSelectedConversationId(null);
     newConversation.mutate();
@@ -235,6 +323,9 @@ export function ChatPage({
     const text = draft.trim();
     if (!text || !selectedConversationId || sendMessage.isPending) return;
     setPendingQuestion(text);
+    setPendingAnswer("");
+    setPendingActivity("正在准备回答…");
+    setPendingStatus("streaming");
     sendMessage.mutate({ conversationId: selectedConversationId, text });
   }
 
@@ -428,7 +519,7 @@ export function ChatPage({
                   </article>
                 </li>
               ))}
-              {pendingQuestion ? <li className="chat-turn"><article className="chat-message chat-message--user"><header><p className="eyebrow">问题 {String(turns.length + 1).padStart(2, "0")}</p></header><p className="chat-question-text">{pendingQuestion}</p></article><article className="chat-message chat-message--assistant chat-message--searching"><header className="chat-answer-heading"><p className="eyebrow"><i aria-hidden="true" />资料库回答</p></header><span className="chat-search-line" aria-hidden="true" /><p aria-live="polite">正在检索资料库并核对来源…</p></article></li> : null}
+              {pendingQuestion ? <li className="chat-turn"><article className="chat-message chat-message--user"><p className="eyebrow">你的问题</p><p>{pendingQuestion}</p></article><article className={`chat-message chat-message--assistant chat-message--${pendingStatus}`}><p className="eyebrow">资料库助手</p><p aria-live="polite" role={pendingStatus === "failed" ? "alert" : "status"}>{pendingActivity}</p>{pendingAnswer ? <p aria-live="polite">{pendingAnswer}</p> : null}</article></li> : null}
             </ol>
             {sendMessage.isError ? <p className="chat-error" role="alert">{sendErrorMessage(sendMessage.error)}</p> : null}
           </div>

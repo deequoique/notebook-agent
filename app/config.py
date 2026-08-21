@@ -289,6 +289,12 @@ class Settings:
     agent_composer_max_tokens: int = field(
         default_factory=lambda: _env_int("AGENT_COMPOSER_MAX_TOKENS", 1000)
     )
+    # Browser Agent responses use the additive SSE endpoint by default.  The
+    # existing JSON endpoint remains available for clients that do not opt in
+    # to streaming or when operators explicitly disable it.
+    agent_streaming_enabled: bool = field(
+        default_factory=lambda: _env_bool("AGENT_STREAMING_ENABLED", True)
+    )
     trash_retention_days: int = field(
         default_factory=lambda: _env_int("TRASH_RETENTION_DAYS", 30)
     )

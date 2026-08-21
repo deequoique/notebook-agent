@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/web-browser-runtime.md","reason":"Authenticated browser API, CSRF, session and compatibility boundaries for the SSE endpoint"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Safe public error projection, cancellation and failure semantics"}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Bounded streaming lifecycle diagnostics without response or provider payloads"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"ChatPage rendering and accessible activity state conventions"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Pending stream state, terminal transitions and duplicate event handling"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Typed SSE event/client contract and safe fallback handling"}

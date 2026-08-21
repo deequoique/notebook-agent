@@ -29,6 +29,7 @@ Cookie 由浏览器读取并通过 `X-CSRF-Token` double-submit。下面用 curl
 | `GET /api/v1/auth/session` | 是 | `200`、返回 session |
 | `DELETE /api/v1/auth/session` | 是 + CSRF | `204`、清除当前 Cookie |
 | `POST /api/v1/conversations/{conversation_id}/messages` | 是 + CSRF | `200`、返回 `AgentAnswer` |
+| `POST /api/v1/conversations/{conversation_id}/messages/stream` | 是 + CSRF | `text/event-stream`、返回公开生命周期事件 |
 | `POST /api/v1/conversations/{conversation_id}/reset` | 是 + CSRF | `200`、返回 `AgentAnswer` |
 | `POST /api/v1/link-tokens` | 是 + CSRF | `200 {"token":"..."}` |
 | `POST /api/v1/link-tokens/consume` | 是 + CSRF | `200 {"linked":true}`、清除 Cookie |
@@ -129,6 +130,23 @@ curl -sS -b "$COOKIE_JAR" -X POST \
 `status` 为 `ok`、`not_found` 或 `failed`。`conversation_id` 无效时为
 `422 {"code":"validation_error","message":"..."}`；Agent 超过
 `AGENT_TIMEOUT_SECONDS` 时为 `504 {"code":"request_failed","message":"..."}`。未登录时为 401。
+
+### 流式生命周期（SSE）
+
+浏览器在 `AGENT_STREAMING_ENABLED=true`（默认）时使用带相同 session/CSRF
+边界的 `/messages/stream`。每条 `data` 是一个公开的 JSON 事件，包含稳定的
+`request_id`、`message_id` 和从 1 开始递增的 `sequence`：
+
+```text
+started → activity(retrieving|composing) → text_delta* → completed
+```
+
+异常终态为 `error` 或 `cancelled`，并带固定的安全错误摘要。`activity` 只来自受控
+阶段标签；provider 内容、工具参数、原始日志和隐藏推理不会进入事件。客户端应按
+`request_id` 校验并忽略重复/过期 sequence，遇到缺口或连接中断显示失败状态，不要
+静默重发同一消息。将 `AGENT_STREAMING_ENABLED` 设为 `false`、`0`、`no` 或 `off`
+时该路径返回 `406 streaming_disabled`，浏览器只做一次原 JSON endpoint 降级；原
+`/messages` 路径始终保留给不支持 SSE 的客户端。
 
 ### 系统命令不是 HTTP endpoint
 

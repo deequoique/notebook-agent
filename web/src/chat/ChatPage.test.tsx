@@ -5,7 +5,8 @@ import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 
 import type { Capabilities, ConversationHistoryPage, ConversationResponse, ConversationTurns } from "../api/contracts";
-import { ApiError } from "../api/client";
+import { ApiError, StreamingUnavailableError } from "../api/client";
+import type { ConversationStreamEvent } from "../api/contracts";
 import { ChatPage } from "./ChatPage";
 
 const history: ConversationHistoryPage = {
@@ -217,5 +218,212 @@ describe("AI search chat page", () => {
     expect(await screen.findByRole("heading", { name: "尚未开放 AI 智能检索" })).toBeInTheDocument();
     expect(fetchHistory).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "新建检索" })).toBeDisabled();
+  });
+
+  it("renders controlled Agent activity and text deltas while an SSE turn is pending", async () => {
+    const user = userEvent.setup();
+    let resolveStream: (value: ConversationResponse) => void = () => undefined;
+    let releaseSecondDelta: () => void = () => undefined;
+    let releaseCompletion: () => void = () => undefined;
+    const sendStream = vi.fn(
+      async (
+        _conversationId: string,
+        _input: { message_id: string; text: string },
+        onEvent: (event: ConversationStreamEvent) => void,
+      ) => {
+        onEvent({
+          type: "started",
+          request_id: "request-1",
+          message_id: "new-id",
+          sequence: 1,
+          activity: "preparing",
+          text: null,
+          response: null,
+          error_code: null,
+          message: null,
+        });
+        onEvent({
+          type: "activity",
+          request_id: "request-1",
+          message_id: "new-id",
+          sequence: 2,
+          activity: "retrieving",
+          text: null,
+          response: null,
+          error_code: null,
+          message: null,
+        });
+        onEvent({
+          type: "text_delta",
+          request_id: "request-1",
+          message_id: "new-id",
+          sequence: 3,
+          activity: null,
+          text: "流式片段",
+          response: null,
+          error_code: null,
+          message: null,
+        });
+        await new Promise<void>((resolve) => { releaseSecondDelta = resolve; });
+        onEvent({
+          type: "text_delta",
+          request_id: "request-1",
+          message_id: "new-id",
+          sequence: 4,
+          activity: null,
+          text: "第二段",
+          response: null,
+          error_code: null,
+          message: null,
+        });
+        await new Promise<void>((resolve) => { releaseCompletion = resolve; });
+        onEvent({
+          type: "completed",
+          request_id: "request-1",
+          message_id: "new-id",
+          sequence: 5,
+          activity: "completed",
+          text: null,
+          response: {
+            status: "ok",
+            text: "最终安全答案",
+            citations: [],
+            action_results: [],
+            thread_id: "thread-1",
+            error_code: null,
+          },
+          error_code: null,
+          message: "回答已完成",
+        });
+        return new Promise<ConversationResponse>((resolve) => { resolveStream = resolve; });
+      },
+    );
+    renderPage({ sendStream });
+
+    const input = await screen.findByRole("textbox", { name: "向资料库提问" });
+    await waitFor(() => expect(input).toBeEnabled());
+    await user.type(input, "流式问题");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+
+    expect(await screen.findByText("正在整理答案…")).toBeInTheDocument();
+    expect(screen.getByText("流式片段")).toBeInTheDocument();
+    releaseSecondDelta();
+    expect(await screen.findByText("流式片段第二段")).toBeInTheDocument();
+    releaseCompletion();
+    expect(await screen.findByText("最终安全答案")).toBeInTheDocument();
+    expect(sendStream).toHaveBeenCalledOnce();
+    resolveStream({ status: "ok", text: "流式片段", citations: [], action_results: [], thread_id: "thread-1", error_code: null });
+    await waitFor(() => expect(input).toHaveValue(""));
+  });
+
+  it("flushes same-turn SSE activity and text before the terminal event", async () => {
+    const user = userEvent.setup();
+    let activityWasPaintable = false;
+    let deltaWasPaintable = false;
+    const sendStream = vi.fn(
+      async (
+        _conversationId: string,
+        _input: { message_id: string; text: string },
+        onEvent: (event: ConversationStreamEvent) => void,
+      ) => {
+        onEvent({
+          type: "started",
+          request_id: "request-same-turn",
+          message_id: "new-id",
+          sequence: 1,
+          activity: "preparing",
+          text: null,
+          response: null,
+          error_code: null,
+          message: null,
+        });
+        onEvent({
+          type: "activity",
+          request_id: "request-same-turn",
+          message_id: "new-id",
+          sequence: 2,
+          activity: "retrieving",
+          text: null,
+          response: null,
+          error_code: null,
+          message: null,
+        });
+        activityWasPaintable = document.body.textContent?.includes("正在检索资料库…") ?? false;
+        onEvent({
+          type: "text_delta",
+          request_id: "request-same-turn",
+          message_id: "new-id",
+          sequence: 3,
+          activity: null,
+          text: "第一段",
+          response: null,
+          error_code: null,
+          message: null,
+        });
+        deltaWasPaintable = document.body.textContent?.includes("第一段") ?? false;
+        onEvent({
+          type: "completed",
+          request_id: "request-same-turn",
+          message_id: "new-id",
+          sequence: 4,
+          activity: "completed",
+          text: null,
+          response: {
+            status: "ok",
+            text: "最终安全答案",
+            citations: [],
+            action_results: [],
+            thread_id: "thread-1",
+            error_code: null,
+          },
+          error_code: null,
+          message: "回答已完成",
+        });
+        return {
+          status: "ok",
+          text: "最终安全答案",
+          citations: [],
+          action_results: [],
+          thread_id: "thread-1",
+          error_code: null,
+        };
+      },
+    );
+    renderPage({ sendStream });
+
+    const input = await screen.findByRole("textbox", { name: "向资料库提问" });
+    await waitFor(() => expect(input).toBeEnabled());
+    await user.type(input, "同一批事件的问题");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+
+    expect(activityWasPaintable).toBe(true);
+    expect(deltaWasPaintable).toBe(true);
+    expect(sendStream).toHaveBeenCalledOnce();
+  });
+
+  it("uses the JSON path once when the server explicitly disables streaming", async () => {
+    const user = userEvent.setup();
+    const sendStream = vi.fn().mockRejectedValue(new StreamingUnavailableError());
+    const send = vi.fn().mockResolvedValue({
+      status: "ok",
+      text: "兼容模式答案",
+      citations: [],
+      action_results: [],
+      thread_id: "thread-1",
+      error_code: null,
+    });
+    renderPage({ sendStream, send });
+
+    const input = await screen.findByRole("textbox", { name: "向资料库提问" });
+    await waitFor(() => expect(input).toBeEnabled());
+    await user.type(input, "兼容模式问题");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+
+    await waitFor(() => expect(send).toHaveBeenCalledOnce());
+    expect(sendStream).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledWith("conversation-1", {
+      message_id: "new-id",
+      text: "兼容模式问题",
+    });
   });
 });
