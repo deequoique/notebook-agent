@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useParams } from "react-router";
+import { useLocation, useParams } from "react-router";
 
 import {
   ApiError,
@@ -16,6 +16,7 @@ import { VideoDetailView } from "./VideoDetailView";
 
 export function VideoDetailPage() {
   const { id = "" } = useParams();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const item = useQuery({
     queryKey: ["library-item", id],
@@ -70,6 +71,7 @@ export function VideoDetailPage() {
       {item.data ? (
         <VideoDetailView
           item={item.data}
+          initiallyEditSavedContext={location.hash === "#saved-context"}
           transcriptPages={transcript.data?.pages ?? []}
           transcriptPending={transcript.isFetchingNextPage}
           transcriptInitialPending={transcript.isPending && item.data.lifecycle === "ready"}

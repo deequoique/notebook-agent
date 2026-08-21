@@ -1,6 +1,7 @@
 type Reply = { ok: boolean; result?: Record<string, unknown>; error?: string };
 
 const statusNode = document.querySelector<HTMLParagraphElement>("#status")!;
+const statusPanel = document.querySelector<HTMLDivElement>(".status-panel")!;
 const primary = document.querySelector<HTMLButtonElement>("#primary")!;
 const disconnect = document.querySelector<HTMLButtonElement>("#disconnect")!;
 let action: "pair" | "finish" | "capture" = "pair";
@@ -41,11 +42,22 @@ async function send(type: string): Promise<Reply> {
   return chrome.runtime.sendMessage({ type }) as Promise<Reply>;
 }
 
+function showStatus(
+  message: string,
+  tone: "loading" | "ready" | "action" | "success" | "error" = "action",
+) {
+  statusNode.textContent = message;
+  statusPanel.dataset.tone = tone;
+}
+
 function render(reply: Reply) {
   const paired = reply.ok && reply.result?.paired === true;
   const pairing = reply.ok && reply.result?.pairing === true;
   action = paired ? "capture" : pairing ? "finish" : "pair";
-  statusNode.textContent = paired ? "已连接。打开一个视频，然后保存当前页面的字幕。" : pairing ? "请先在刚打开的 Notebook Agent 页面批准连接。" : "连接后，可从当前页面保存字幕。";
+  showStatus(
+    paired ? "已连接。打开一个视频，然后保存当前页面的字幕。" : pairing ? "请先在刚打开的 Notebook Agent 页面批准连接。" : "连接后，可从当前页面保存字幕。",
+    paired ? "ready" : "action",
+  );
   primary.textContent = paired ? "保存当前视频" : pairing ? "我已批准，完成连接" : "连接 Notebook Agent";
   primary.disabled = false;
   disconnect.hidden = !paired && !pairing;
@@ -53,11 +65,11 @@ function render(reply: Reply) {
 
 primary.addEventListener("click", async () => {
   primary.disabled = true;
-  statusNode.textContent = action === "capture" ? "正在读取并提交字幕…" : "正在连接…";
+  showStatus(action === "capture" ? "正在读取并提交字幕…" : "正在连接…", "loading");
   const reply = await send(action === "capture" ? "CAPTURE" : action === "finish" ? "FINISH_PAIRING" : "START_PAIRING");
   if (!reply.ok) {
     const error = reply.error ?? "request_failed";
-    statusNode.textContent = messages[error] ?? `操作没有完成（${error}），请稍后重试。`;
+    showStatus(messages[error] ?? `操作没有完成（${error}），请稍后重试。`, "error");
     if (resetPairingErrors.has(error)) {
       await send("DISCONNECT");
       action = "pair";
@@ -69,12 +81,15 @@ primary.addEventListener("click", async () => {
   }
   if (action === "capture") {
     const lifecycle = String(reply.result?.lifecycle ?? "queued");
-    statusNode.textContent = lifecycle === "needs_asr" ? "视频没有可用字幕，已标记为需要语音转写。" : "已提交到资料库，Notebook Agent 正在整理字幕。";
+    showStatus(
+      lifecycle === "needs_asr" ? "视频没有可用字幕，已标记为需要语音转写。" : "已提交到资料库，Notebook Agent 正在整理字幕。",
+      lifecycle === "needs_asr" ? "action" : "success",
+    );
     primary.textContent = "再次保存";
     primary.disabled = false;
   } else if (action === "pair") {
     action = "finish";
-    statusNode.textContent = "请在新打开的网页中批准连接，然后回到这里完成。";
+    showStatus("请在新打开的网页中批准连接，然后回到这里完成。", "action");
     primary.textContent = "我已批准，完成连接";
     primary.disabled = false;
     disconnect.hidden = false;

@@ -284,7 +284,7 @@ export function ShowcasePage() {
           <a href="#demo">试用场景</a>
         </nav>
         <div className="showcase-nav__actions">
-          <a className="showcase-nav__companion" download href={BROWSER_COMPANION_DOWNLOAD_URL}>下载浏览器伴侣</a>
+          <a className="showcase-nav__companion" download href={BROWSER_COMPANION_DOWNLOAD_URL}>下载浏览器插件</a>
           <RouteLink className="showcase-nav__cta" to="/login">进入资料库 <ArrowIcon /></RouteLink>
         </div>
       </header>

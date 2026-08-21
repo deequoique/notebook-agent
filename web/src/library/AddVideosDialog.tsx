@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import { submitVideoBatch } from "../api/client";
+import { ApiError, submitVideoBatch } from "../api/client";
 import type { BatchSubmitInput, BatchSubmitResponse } from "../api/contracts";
 import {
   collectCollectionNames,
@@ -27,6 +27,22 @@ const resultCopy: Record<string, string> = {
   create_failed: "添加失败，请稍后重试",
   quota_exceeded: "已达到保存上限",
 };
+
+function submitErrorCopy(error: unknown): string {
+  if (!(error instanceof ApiError)) return "无法连接资料库，请检查网络后重试。";
+  switch (error.code) {
+    case "save_disabled":
+      return "当前部署暂未开放服务器端添加，请改用浏览器插件或稍后再试。";
+    case "quota_exceeded":
+      return "当前资料库已达到保存上限，可以先归档旧视频后再试。";
+    case "queue_unavailable":
+      return "视频链接已收到，但整理队列暂时不可用，请稍后重新提交。";
+    default:
+      return error.status >= 500
+        ? "资料库服务暂时没有响应，请稍后重试。"
+        : "添加没有完成，请检查链接后重试。";
+  }
+}
 
 export function AddVideosDialog({
   open,
@@ -140,9 +156,9 @@ export function AddVideosDialog({
       if (submissionGeneration !== submissionGenerationRef.current) return;
       setResult(nextResult);
       onSubmitted?.(nextResult);
-    } catch {
+    } catch (submitError) {
       if (submissionGeneration !== submissionGenerationRef.current) return;
-      setError("添加未完成，请检查网络后重试。");
+      setError(submitErrorCopy(submitError));
     } finally {
       if (submissionGeneration === submissionGenerationRef.current) setSubmitting(false);
     }
