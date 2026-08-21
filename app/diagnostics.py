@@ -31,7 +31,6 @@ _STAGES = frozenset({
 _ROUTES = frozenset({"agent", "command", "duplicate", "action"})
 _TOOLS = frozenset({
     "search_segments", "get_neighbors", "get_item", "open_at", "todo_write",
-    "report_no_relevant_evidence",
     "request_save_confirmation", "save_videos", "confirm_video_save",
     "clarify_save_confirmation", "cancel_video_save", "list_saved_items",
     "get_saved_item", "update_saved_item", "delete_saved_items",
@@ -45,7 +44,7 @@ _ANSWER_FAILURE_REASONS = frozenset({
     "invalid_structure", "unsafe_text", "missing_citation",
     "invalid_citation", "unknown_citation", "duplicate_citation",
     "too_many_segments", "too_many_items",
-    "missing_scope_item", "no_evidence_unavailable", "provider_failure",
+    "missing_scope_item", "provider_failure",
 })
 _RECOVERY_CATEGORIES = frozenset({
     "transient_read", "read_unavailable", "missing_context",

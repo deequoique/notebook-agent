@@ -17,27 +17,26 @@ rather than a model-authored answer mode:
 trusted request + bounded context -> Turn Agent <-> visible atomic tools
                                   -> terminal action wins, or
                                   -> canonical read-only result, or
-                                  -> validated natural answer + server sources
+                                  -> structured grounded Composer + server sources
 ```
 
-There is no environment or Settings switch to a planner-to-Composer runtime.
-Tenant identity, exact current-message reference scope, deleted/non-ready
-gates, pending confirmation, idempotency, side-effect claims, hard
-tool/request/output/time limits, and the current-run Citation allow-list remain
-server-owned.
+Knowledge answers use a bounded primary Turn Agent followed by a structured
+Answer Composer whenever a search returns candidates. Tenant identity,
+deleted/non-ready gates, pending confirmation, idempotency, side-effect claims,
+hard tool/request/output/time limits, and the current-run Citation allow-list
+remain server-owned.
 
 ### 1.1 Bounded-autonomy contracts
 
 - Social replies, capability replies, and missing-context clarification may
   finish with zero knowledge tools. Such text must not contain Citation
   markers, URLs, or a model-authored source block. A current-message supported
-  URL plus a content question still requires an in-scope search.
-- A successful knowledge search requires the final natural text to contain at
-  least one exact `[S<positive segment id>]` marker. Every marker must belong
-  to the current run's Citation cache, satisfy exact reference scope when one
-  exists, cover at most five source items, and contain at most eight distinct
-  segments. The server, never the model, appends source titles, URLs,
-  timestamps, and excerpts.
+  URL plus a content question still requires a tenant-scoped search.
+- A successful knowledge search with candidates enters the structured Composer.
+  Grounded sections cite positive `[S<segment id>]` values from the current-run
+  Citation cache; unsupported sections carry no model text or citations and
+  render a fixed server-owned evidence-insufficiency notice. The server
+  appends source titles, URLs, timestamps, and excerpts.
 - Invalid grounded text or a failed primary run with trusted Citations enters a
   tool-free answer Agent against the same server-filtered evidence allow-list.
   It receives exactly three total provider attempts; invalid output, timeout,
@@ -53,7 +52,7 @@ server-owned.
   current-message reference filtering, its Citation item may authorize a
   subsequent scoped search in the same run. Prior source focus and raw model
   history alone never authorize an item. Domain services repeat tenant,
-  active/deleted, ready-state, item, and exact-reference predicates. If no
+  active/deleted, ready-state, and item predicates. If no
   knowledge search follows, visible text and history use canonical
   server-rendered read text rather than unconstrained model prose.
 - Save, management mutation, confirmation, cancellation, restore, and explicit
@@ -61,7 +60,7 @@ server-owned.
   by Agent recovery, and model prose cannot replace their result.
 - Save and management tools are always registered. Tool prepare policy hides
   pending decision tools without a matching cached trusted pending snapshot
-  and hides unrelated management/pending tools under exact URL scope. Bare URL
+  and hides unrelated management/pending tools for semantic content questions. Bare URL
   save confirmation remains a deterministic pre-model route.
 - `todo_write` is optional working memory for one dependent multi-step turn.
   It stores at most six short items with only `pending`, `in_progress`,
@@ -153,12 +152,7 @@ for each answer-agent attempt. It must be positive and must not exceed
   representative for each, then fills remaining slots by score with distinct
   segments from those selected items. All database hydration remains tenant
   scoped.
-- A social/capability answer may finish without retrieval. Once a knowledge
-  search succeeds, natural-answer validation requires current-run citations.
-  Empty search remains distinct from a transient read failure; exhausted read
-  recovery returns `read_unavailable`, while a composable inventory read may
-  still return its bounded canonical partial read text. Trusted evidence never
-  bypasses the answer Agent with a deterministic evidence fallback.
+- A social/capability answer may finish without retrieval. Once a knowledge search succeeds, empty results remain distinct from transient read failure. Clean final empty search state produces server-owned `not_found/no_evidence`; non-empty evidence always enters the structured Composer. Exhausted read recovery returns `read_unavailable`, while a composable inventory read may still return bounded canonical partial read text.
 - Primary-agent usage-limit or timeout failures with trusted citations enter
   the bounded answer Agent. Without citations they use phase-accurate
   failed-limit or timeout behavior. The raw hard limits remain defense in
@@ -171,12 +165,7 @@ for each answer-agent attempt. It must be positive and must not exceed
   question and all bounded current-run Citation title, excerpt, timestamp, and
   segment-ID candidates. It uses `PromptedOutput(AnswerDraft)` to parse
   schema-prompted JSON text without an output tool or `tool_choice=required`.
-  The server validates that every selected and cited ID is allowed, every
-  section cites evidence, the union of section ``citation_ids`` exactly equals
-  top-level ``selected_segment_ids``, selected text contains no model-authored
-  URL/source block, the selection has at most five distinct items and eight
-  distinct segments, and every explicit-scope item with evidence remains
-  selected. The answer Agent
+  The server validates that every selected and cited ID is allowed, grounded sections have evidence, unsupported sections contain no model-authored text or citations, selected text contains no model-authored URL/source block, the selection has at most five distinct items and eight distinct segments, and every server-owned item constraint remains satisfied. The answer Agent
   itself chooses relevance and segment allocation; eight is an output cap, not
   a retrieval-order prefilter. It has no output retry and never starts a fresh
   search. When an attempt is rejected, the next attempt may receive only one
@@ -237,7 +226,8 @@ for each answer-agent attempt. It must be positive and must not exceed
 | primary timeout or usage limit after evidence | log retrieval phase/kind and run the three-attempt answer Agent |
 | Web request reaches one retrieval-stage timeout with evidence | transport remains open for answer attempts; do not return a premature 504 |
 | primary timeout or usage limit without evidence | fail closed with phase-accurate wording |
-| natural answer has unknown/missing IDs or six item IDs | run the tool-free answer Agent against the same evidence allow-list |
+| non-empty search candidates | enter structured Composer; unsupported sections render fixed server text |
+| natural answer has unknown/missing IDs or six item IDs | run the bounded Composer against the same evidence allow-list |
 | answer draft is invalid, truncated, over limit, timed out, or provider fails | consume one of three answer attempts; after exhaustion return `failed/answer_unavailable` with no Citations or draft persistence |
 | provider HTTP request fails | preserve phase behavior; answer-stage retries log only safe status/class; primary retrieval follows the development-only detail policy |
 | valid answer draft | server-rendered markers and grouped real sources, at most five items |
@@ -247,17 +237,17 @@ for each answer-agent attempt. It must be positive and must not exceed
 ## 5. Good / Base / Bad Cases
 
 - Good: a provider ignores its parallel-tool-call hint and emits two searches;
-  the first executes, the second gets `same_model_step`, and the Turn Agent
-  returns a validated natural answer using only the cached source IDs.
+  the first executes, the second gets `same_model_step`, and the structured
+  Composer uses only the cached source IDs.
 - Good: one video dominates raw segment scores but bounded over-fetch exposes
   five relevant item groups. The answer shows one top-level row per video and
   preserves two distant links for the selected first video.
-- Base: one search provides sufficient evidence. The Turn Agent returns a
-  valid cited answer directly, and canonical history contains only the
-  normalized question and final answer.
+- Base: one search provides sufficient evidence. The Composer returns a
+  valid cited answer, and canonical history contains only the normalized
+  question and final answer.
 - Bad: rely on `parallel_tool_calls=False` alone, treat skipped tools as zero
-  results, rerun search to fix citation formatting, invoke Composer on every
-  successful answer, fabricate chapter names, or log private evidence or
+  results, rerun search to fix citation formatting, bypass Composer after
+  non-empty retrieval, fabricate chapter names, or log private evidence or
   exception text.
 
 ## 6. Tests Required
@@ -314,18 +304,14 @@ if deps.reserve_retrieval(run_step=ctx.run_step, kind=kind) is not EXECUTE:
 answer = await composer.run(question, deps=ComposerDeps(allowed_citations))
 ```
 
-## Scenario: Exact current-message video references
+## Scenario: Video URL context and optional item narrowing
 
 ### 1. Scope / Trigger
 
 Use this contract whenever the current user message contains one or more
-supported video URLs. It prevents semantic nearest-neighbor retrieval and stale
-conversation history from substituting a different saved video for the video
-the user explicitly named.
-
-An explicit current-message reference is a stricter boundary than ordinary
-tenant-scoped retrieval. Tenant scoping answers “whose library”; reference
-scoping answers “which exact items inside that library.” Both are required.
+supported video URLs. A URL is trusted model context, not an automatic exact
+retrieval boundary. The model may search the whole current tenant or provide an
+optional `item_id`; the service remains the hard authorization boundary.
 
 ### 2. Signatures
 
@@ -360,9 +346,9 @@ def bm25_search(
 ) -> list[Hit]: ...
 ```
 
-`None` is the only unrestricted `KnowledgeServices` reference-scope sentinel.
-An explicitly supplied empty or malformed scope must generate false predicates;
-it must never normalize into unrestricted retrieval.
+The current tenant is the only unrestricted retrieval boundary. Optional
+`item_id` filtering is rechecked by the service for tenant ownership, active,
+non-archived, and ready state. Model arguments never supply tenant or user IDs.
 
 ### 3. Contracts
 
@@ -374,16 +360,12 @@ it must never normalize into unrestricted retrieval.
   save-confirmation action before retrieval-service construction or any model
   request. Preserve original URL order and duplicates. Existing unavailable,
   invalid, unsupported, and batch-limit action outcomes remain authoritative.
-- A supported URL plus semantic text creates an exact `(platform, platform_id)`
-  scope from the current message. Conversation history cannot add, replace, or
-  broaden these references.
+- A supported URL plus semantic text is passed as model context; it does not create an automatic exact retrieval scope. The model may use tenant-wide search or an optional `item_id`, while the service enforces tenant and item readiness/visibility. Conversation history cannot broaden server authorization.
 - Vector search, lexical search, result hydration, neighbor hydration, item
   metadata, and timestamp resolution repeat tenant, active/deleted, ready-state,
   and exact-reference predicates as applicable. Defense-in-depth citation
   filtering runs before evidence reaches the Turn Agent's trusted Citation cache.
-- A scoped miss is a successful empty tool result, not a retrieval failure. It
-  records exactly one `started` and one `succeeded` tool outcome and cannot
-  invoke Composer without in-scope citations.
+- An empty search is a successful empty tool result, not a retrieval failure. Clean final emptiness produces server-owned `no_evidence`; candidates invoke Composer.
 - Explicit URL content questions hide inventory, mutation, and pending-save
   tools. `save_videos` is exposed only when the semantic text contains a
   conservative, positive current-message save command; a negated save phrase or
@@ -398,26 +380,24 @@ it must never normalize into unrestricted retrieval.
 | --- | --- |
 | bare supported URL batch | durable `save_confirmation_required`; zero model requests; no retrieval service |
 | bare unsupported or malformed URL | existing safe validation code; no accidental supported confirmation |
-| URL plus semantic content question, referenced item ready | every tool result and final citation belongs to an exact referenced item |
-| referenced item absent, deleted, non-ready, or without evidence | `not_found/no_evidence`; no other item fallback and no answer-agent recovery |
-| model reuses an out-of-scope segment/item ID from history | empty successful lookup; ID never enters trusted citations |
-| malformed non-empty scope reaches a knowledge service | false predicate / zero rows, never unrestricted search |
+| URL plus semantic content question | model may use tenant-wide search or optional item narrowing; citations remain tenant-scoped |
+| optional item absent, deleted, non-ready, or without evidence | empty successful lookup; no cross-tenant or inactive-item fallback |
+| model reuses an out-of-scope segment/item ID from history | ID never enters trusted citations |
 | URL content question while an old save/delete action is pending | current question remains retrieval-only; old pending action is unchanged |
 | explicit positive “save this URL” command | `save_videos` may be exposed; current-message URL equality checks still apply |
 | ordinary free-text question | existing hybrid retrieval and management tool behavior unchanged |
 
 ### 5. Good / Base / Bad Cases
 
-- Good: history discusses video A, but the current question names video B. All
-  searches and expansions are scoped to B, and only B citations can compose.
+- Good: history discusses video A, but the current question names video B. The
+  model can search tenant-wide or narrow with B's `item_id`; service checks still
+  prevent cross-tenant or inactive-item access.
 - Good: the current message is a bare URL duplicated three times. The durable
   confirmation receives the three original values in order without a model.
 - Base: no supported URL is present. The existing tenant-wide Top-5 retrieval
   and management-history behavior runs unchanged.
-- Bad: embed a missing video ID, accept the tenant's nearest vector hit, and
-  summarize that hit as the requested video.
-- Bad: clear an invalid scope to `()` and interpret `()` as unrestricted, or
-  rely only on prompt wording to keep stale history from choosing a write tool.
+- Bad: accept an `item_id` from another tenant or an inactive item, or rely only
+  on prompt wording to keep stale history from choosing a write tool.
 
 ### 6. Tests Required
 

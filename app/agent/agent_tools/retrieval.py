@@ -48,13 +48,12 @@ def register_retrieval_tools(agent: Agent, policy: ToolPolicy) -> None:
         """Execute a tenant-bound search, optionally narrowed to an observation."""
 
         if item_id is not None and not ctx.deps.can_scope_search_to_item(item_id):
-            # The model may only use an item reference returned by a successful
-            # current-run inventory/detail/search observation or a recent
-            # trusted inventory context reference.  No backend call is
-            # attempted for an unobserved or forged ID.
+            # This is only a syntactic guard.  Ownership and readiness are
+            # always enforced again by the tenant-bound service query; an
+            # item need not have been observed by a preceding tool call.
             ctx.deps.invalid_item_scope_attempt = True
             raise ModelRetry(
-                "先从本轮成功返回的知识库条目中选择一个条目，再进行限定检索。"
+                "item_id 必须是正整数；条目归属和可检索状态由服务器校验。"
             )
         normalized_query = query.strip()
         arguments = {
@@ -214,10 +213,8 @@ def register_retrieval_tools(agent: Agent, policy: ToolPolicy) -> None:
             elif fingerprint is not None:
                 ctx.deps.last_empty_search_fingerprint = fingerprint
         # A reservation is not evidence of a completed read.  This marker is
-        # set only after the backend returned, including an empty result, and
-        # a later successful search invalidates any earlier no-evidence vote.
+        # set only after the backend returned, including an empty result.
         ctx.deps.successful_searches += 1
-        ctx.deps.no_relevant_evidence_requested = False
         return {
             "status": "ok",
             "evidence": [value.model_dump() for value in citations],
@@ -231,7 +228,7 @@ def register_retrieval_tools(agent: Agent, policy: ToolPolicy) -> None:
         limit: int = SEARCH_RESULT_LIMIT,
         item_id: Annotated[int | None, Field(gt=0)] = None,
     ) -> dict:
-        """Search globally or within a trusted current-run item reference."""
+        """Search the tenant library globally or within an optional item."""
 
         return _run_search_segments(ctx, query, limit, item_id)
 
@@ -294,7 +291,7 @@ def register_retrieval_tools(agent: Agent, policy: ToolPolicy) -> None:
 
     @agent.tool(prepare=policy.prepare_expansion)
     def get_item(ctx: RunContext[AgentDeps], item_id: int) -> dict:
-        """Read metadata for a knowledge item returned by search."""
+        """Read metadata for a tenant-owned knowledge item."""
 
         if skipped := policy.skipped_payload(
             ctx,

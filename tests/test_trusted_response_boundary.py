@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
@@ -14,9 +13,10 @@ from app.agent.response import (
     CanonicalResponseSection,
     GroundedResponseSection,
     ResponseEnvelope,
+    UNSUPPORTED_EVIDENCE_TEXT,
+    UnsupportedResponseSection,
 )
 from app.agent.runtime import KnowledgeAgent
-from app.agent.agent_tools.policy import ToolPolicy
 from app.agent.types import AgentRequest, AnswerDraft, Citation
 from app.channels.types import TenantContext
 from app.config import Settings
@@ -85,9 +85,29 @@ def _citation(segment_id: int = 10, item_id: int = 1) -> Citation:
 
 
 def test_answer_draft_has_disposition_and_no_duplicate_top_level_selection():
-    no_evidence = AnswerDraft(kind="no_relevant_evidence")
-    assert no_evidence.sections is None
     assert "selected_segment_ids" not in AnswerDraft.model_json_schema()["properties"]
+
+    grounded = AnswerDraft(
+        kind="grounded",
+        sections=[{"text": "supported", "citation_ids": [10]}],
+    )
+    assert grounded.sections[0].citation_ids == [10]
+    assert AnswerDraft(
+        kind="grounded",
+        sections=[
+            {"text": "supported", "citation_ids": [10]},
+            {"status": "unsupported"},
+        ],
+    ).sections[1].citation_ids == []
+
+    with pytest.raises(ValidationError):
+        AnswerDraft(
+            kind="grounded",
+            sections=[
+                {"text": "supported", "citation_ids": [10]},
+                {"status": "unsupported", "text": "模型编造的事实"},
+            ],
+        )
 
     with pytest.raises(ValidationError):
         AnswerDraft.model_validate(
@@ -102,7 +122,6 @@ def test_answer_draft_has_disposition_and_no_duplicate_top_level_selection():
         AnswerDraft.model_validate(
             {
                 "kind": "no_relevant_evidence",
-                "sections": [{"text": "untrusted", "citation_ids": [10]}],
             }
         )
 
@@ -125,6 +144,13 @@ def test_envelope_rejects_mismatched_section_kind_and_unregistered_server_labels
         ActionResponseSection("action", "model_supplied", "done")
 
 
+def test_unsupported_response_section_is_server_owned_and_fixed():
+    section = UnsupportedResponseSection("unsupported")
+    assert section.text == UNSUPPORTED_EVIDENCE_TEXT
+    with pytest.raises(TypeError):
+        UnsupportedResponseSection("unsupported", "model fact")  # type: ignore[call-arg]
+
+
 def test_response_envelope_rejects_citations_for_non_grounded_dispositions():
     with pytest.raises(TypeError):
         ResponseEnvelope.no_evidence(text="model text")  # type: ignore[call-arg]
@@ -142,30 +168,8 @@ def test_response_envelope_rejects_citations_for_non_grounded_dispositions():
     assert grounded.project(thread_id="thread").citations == [_citation()]
 
 
-def test_no_evidence_tool_is_gated_by_clean_successful_search():
-    policy = ToolPolicy()
-    deps = SimpleNamespace(
-        successful_searches=0,
-        pending_read_failures={},
-        read_recovery_exhausted=False,
-        actions=SimpleNamespace(outcome=None),
-    )
-    ctx = SimpleNamespace(deps=deps)
-    marker = object()
-    assert policy.prepare_no_relevant_evidence(ctx, marker) is None
-
-    deps.successful_searches = 1
-    assert policy.prepare_no_relevant_evidence(ctx, marker) is marker
-
-    deps.pending_read_failures = {"fingerprint": "search_segments"}
-    assert policy.prepare_no_relevant_evidence(ctx, marker) is None
-    deps.pending_read_failures = {}
-    deps.actions.outcome = object()
-    assert policy.prepare_no_relevant_evidence(ctx, marker) is None
-
-
 @pytest.mark.asyncio
-async def test_no_evidence_recovery_drops_irrelevant_candidates_and_sources():
+async def test_nonempty_candidates_do_not_become_no_evidence_after_invalid_composer_draft():
     citation = _citation()
 
     def composer(_messages, _info):
@@ -180,68 +184,39 @@ async def test_no_evidence_recovery_drops_irrelevant_candidates_and_sources():
         composer_model=FunctionModel(composer),
     ).run(_request())
 
-    assert result.answer.status == "not_found"
-    assert result.answer.error_code == "no_evidence"
+    assert result.answer.status == "failed"
+    assert result.answer.error_code == "answer_unavailable"
     assert result.answer.citations == []
     assert "来源" not in result.answer.text
     assert "[S10]" not in result.answer.text
 
 
 @pytest.mark.asyncio
-async def test_explicit_no_evidence_disposition_does_not_call_composer():
+async def test_nonempty_search_always_uses_structured_composer():
     citation = _citation()
     composer_calls = 0
 
-    def primary(messages, _info):
-        returned = [
-            part
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ToolReturnPart)
-        ]
-        if not returned:
-            return ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        "search_segments",
-                        json.dumps({"query": "主题"}),
-                        tool_call_id="search-1",
+    def composer(_messages, _info):
+        nonlocal composer_calls
+        composer_calls += 1
+        return ModelResponse(
+            parts=[
+                TextPart(
+                    json.dumps(
+                        {
+                            "kind": "grounded",
+                            "sections": [
+                                {
+                                    "status": "grounded",
+                                    "text": "直接回答",
+                                    "citation_ids": [10],
+                                }
+                            ],
+                        }
                     )
-                ]
-            )
-        if len(returned) == 1:
-            return ModelResponse(
-                parts=[ToolCallPart("report_no_relevant_evidence", "{}", tool_call_id="none-1")]
-            )
-        return ModelResponse(parts=[TextPart("模型附加文字")])
-
-    def composer(_messages, _info):
-        nonlocal composer_calls
-        composer_calls += 1
-        raise AssertionError("explicit server disposition must not invoke composer")
-
-    result = await KnowledgeAgent(
-        FunctionModel(primary),
-        replace(Settings(), agent_timeout_seconds=2),
-        lambda _request: _Services([citation]),
-        composer_model=FunctionModel(composer),
-    ).run(_request())
-
-    assert result.answer.status == "not_found"
-    assert result.answer.citations == []
-    assert composer_calls == 0
-
-
-@pytest.mark.asyncio
-async def test_valid_grounded_primary_answer_skips_composer():
-    citation = _citation()
-    composer_calls = 0
-
-    def composer(_messages, _info):
-        nonlocal composer_calls
-        composer_calls += 1
-        raise AssertionError("valid primary answer should be delivered directly")
+                )
+            ]
+        )
 
     result = await KnowledgeAgent(
         _search_then("直接回答 [S10]"),
@@ -252,11 +227,11 @@ async def test_valid_grounded_primary_answer_skips_composer():
 
     assert result.answer.status == "ok"
     assert result.answer.citations == [citation]
-    assert composer_calls == 0
+    assert composer_calls == 1
 
 
 @pytest.mark.asyncio
-async def test_later_successful_search_invalidates_prior_no_evidence_vote():
+async def test_later_successful_search_keeps_prior_empty_observation_recoverable():
     citation = _citation()
     search_calls = 0
 
@@ -279,8 +254,6 @@ async def test_later_successful_search_invalidates_prior_no_evidence_vote():
                 parts=[ToolCallPart("search_segments", json.dumps({"query": "初始"}), tool_call_id="s1")]
             )
         if len(returned) == 1:
-            return ModelResponse(parts=[ToolCallPart("report_no_relevant_evidence", "{}", tool_call_id="none")])
-        if len(returned) == 2:
             return ModelResponse(
                 parts=[ToolCallPart("search_segments", json.dumps({"query": "改写"}), tool_call_id="s2")]
             )
@@ -291,7 +264,24 @@ async def test_later_successful_search_invalidates_prior_no_evidence_vote():
         replace(Settings(), agent_timeout_seconds=2),
         lambda _request: Services([]),
         composer_model=FunctionModel(
-            lambda *_args: (_ for _ in ()).throw(AssertionError("composer not required"))
+            lambda *_args: ModelResponse(
+                parts=[
+                    TextPart(
+                        json.dumps(
+                            {
+                                "kind": "grounded",
+                                "sections": [
+                                    {
+                                        "status": "grounded",
+                                        "text": "后续检索得到答案",
+                                        "citation_ids": [10],
+                                    }
+                                ],
+                            }
+                        )
+                    )
+                ]
+            )
         ),
     ).run(_request())
 

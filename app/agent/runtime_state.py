@@ -72,9 +72,13 @@ class AgentDeps:
     citations: dict[int, Citation] = field(default_factory=dict)
     last_retrieval_run_step: int | None = None
     diagnostics: RequestDiagnostics | None = None
-    # Non-empty only when the current message contains supported URLs plus
-    # semantic text. It is server-owned and never model-authored.
+    # Legacy exact-reference compatibility for trusted callers.  The normal
+    # URL-plus-question route leaves this empty so retrieval remains tenant-wide.
     reference_scope: tuple[tuple[str, str], ...] = ()
+    # URL context must not become a retrieval scope, but it still marks a
+    # semantic content question so save/confirmation tools cannot turn a
+    # content request into an unrelated mutation.
+    semantic_url_question: bool = False
     reference_save_requested: bool = False
     # Present only on the opt-in bounded-autonomy path. It is intentionally
     # turn-local and never copied into AgentRequest/history or diagnostics.
@@ -90,7 +94,6 @@ class AgentDeps:
     pending_read_failures: dict[str, str] = field(default_factory=dict)
     last_empty_search_fingerprint: str | None = None
     read_recovery_exhausted: bool = False
-    no_relevant_evidence_requested: bool = False
     todo_used: bool = False
     _tool_lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -126,31 +129,23 @@ class AgentDeps:
             self.citations[citation.segment_id] = citation
 
     def can_scope_search_to_item(self, item_id: int | None) -> bool:
-        """Return whether a scoped search item is trusted for this run.
+        """Validate only the shape of an optional item narrowing.
 
-        Item identifiers are references only: the knowledge service still
-        repeats tenant, visibility, readiness, and exact-reference checks.
-        The runtime allow-list combines current management observations,
-        validated prior inventory context, and citations recorded during this
-        run.  Prior source/history focus is deliberately excluded.
+        Item IDs are model-selected query parameters, not authorization.  The
+        tenant-bound KnowledgeServices query repeats ownership, deletion,
+        archive, readiness, and segment/item predicates for every lookup.
+        Keeping this check syntactic prevents malformed tool input without
+        requiring a prior inventory observation (which would unnecessarily
+        constrain tenant-wide retrieval).
         """
 
-        if isinstance(item_id, bool) or not isinstance(item_id, int) or item_id <= 0:
-            return False
-        citation_observed = any(
-            citation.item_id == item_id for citation in self.citations.values()
+        if item_id is None:
+            return True
+        return not (
+            isinstance(item_id, bool)
+            or not isinstance(item_id, int)
+            or item_id <= 0
         )
-        if self.reference_scope:
-            # An exact current-message reference is the strict upper bound.
-            # Inventory observations and prior context do not carry the
-            # platform reference needed to prove that they match this scope;
-            # only a current-run Citation accepted by record() does.
-            return citation_observed
-        if self.actions.is_observed_item(item_id):
-            return True
-        if item_id in self.context.inventory_item_ids:
-            return True
-        return citation_observed
 
     def tool_event(
         self,

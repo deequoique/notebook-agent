@@ -40,12 +40,16 @@ from app.agent.runtime_state import (
     AgentExecution,
     _citation_matches_scope,
 )
-from app.agent.response import GroundedResponseSection, ResponseEnvelope
+from app.agent.response import (
+    GroundedResponseSection,
+    ResponseEnvelope,
+    UNSUPPORTED_EVIDENCE_TEXT,
+    UnsupportedResponseSection,
+)
 from app.agent.types import (
     AgentRequest,
     AnswerDraft,
     GroundedDraft,
-    NoRelevantEvidenceDraft,
     Citation,
 )
 from app.config import Settings
@@ -53,18 +57,19 @@ from app.diagnostics import RequestDiagnostics, classify_usage_limit
 
 
 _COMPOSER_JSON_EXAMPLE = (
-    '{"kind":"grounded","sections":[{"text":"简洁回答","citation_ids":[123]}]}'
+    '{"kind":"grounded","sections":[{"status":"grounded","text":"简洁回答","citation_ids":[123]}]}'
 )
 _COMPOSER_GLOBAL_CONSTRAINTS = (
-    "完整约束：kind 只能是 grounded 或 no_relevant_evidence；grounded 的 sections 最多 8 个；"
+    "完整约束：kind 只能是 grounded；grounded 的 sections 最多 8 个；"
+    "每个 section 必须显式填写 status=grounded 或 status=unsupported；"
+    "grounded section 必须有非空 text 和 citation_ids；unsupported section 必须只包含 status，"
+    "不得填写 text 或 citation_ids，服务器会渲染固定的证据不足说明；"
     "只选择与问题相关的视频；每个选中的视频至少引用一个 segment，"
-    "更重要的视频可以引用多个 segment；每个 section 必须有非空 text 和至少一个 citation_id；"
+    "更重要的视频可以引用多个 segment；"
     "所有 section citation_ids 按 section 顺序合并后就是最终选择（最多 8 个），不得重复；"
     "所有 section 引用都必须是可用候选 ID；全部引用最多来自 5 个视频；"
     "只能使用可用候选证据中的 ID；section text 不得包含 URL、来源块或 [S…] 标记；"
-    "当前消息显式 URL 范围内已有证据的每个视频都必须至少被引用一次；"
-    "如果没有任何候选支持问题，必须返回 {\"kind\":\"no_relevant_evidence\"}，"
-    "不要勉强引用无关片段。"
+    "不要为了给无证据 section 填充 Citation 而引用无关片段。"
 )
 _COMPOSER_SCHEMA_GUIDANCE = (
     "只返回一个符合 schema 的 JSON。结构示例（123 仅为示例，必须替换为可用候选 ID）："
@@ -73,7 +78,8 @@ _COMPOSER_SCHEMA_GUIDANCE = (
 
 COMPOSER_INSTRUCTIONS = f"""
 你是私有知识库的回答编辑器。只能依据服务器提供的证据写回答，不能使用模型记忆补充事实。
-输出结构化 sections；每个 section 写简洁中文文本，并列出支持该 section 的 segment ID。
+输出结构化 sections；有证据的 section 写简洁中文文本并列出支持该 section 的 segment ID；
+无法确认的 section 只输出 {{"status":"unsupported"}}，不要自行填写解释文本。
 只在有助于阅读时使用克制的 Markdown：段落、短标题、有序/无序列表、强调、引用和行内代码。
 简单回答保持简单，不要强制使用标题或列表。不要输出 URL、Markdown 链接、图片、原始 HTML、
 “来源/参考资料”区块、视频标题、[S…] 标记、章节标题或服务器未提供的事实。
@@ -94,8 +100,8 @@ _COMPOSER_FAILURE_GUIDANCE: dict[str, str] = {
         "标记；引用只能放在 citation_ids 中。"
     ),
     "missing_citation": (
-        "校验类别 missing_citation：每个 section 都必须至少引用一个可用"
-        "证据 segment。"
+        "校验类别 missing_citation：整份回答至少要有一个 grounded section 引用可用证据 segment；"
+        "无法确认的部分必须使用 status=unsupported，不能用空 citation_ids 伪装。"
     ),
     "unknown_citation": (
         "校验类别 unknown_citation：section citation_ids 只能选择可用证据中列出的"
@@ -126,10 +132,6 @@ _COMPOSER_FAILURE_GUIDANCE: dict[str, str] = {
         "校验类别 provider_failure：上一轮没有得到可交付的结构化结果。"
         "请重新直接返回符合 schema 的 JSON。"
     ),
-    "no_evidence_unavailable": (
-        "校验类别 no_evidence_unavailable：本轮存在未完成的读取，不能下结论说没有证据。"
-        "请只返回有明确支持的 grounded section。"
-    ),
 }
 
 
@@ -145,19 +147,19 @@ def _draft_failure_reason(
 ) -> str | None:
     """Classify a rejected draft without retaining any model-authored content."""
 
-    decision = draft.decision
-    if isinstance(decision, NoRelevantEvidenceDraft):
-        return None
-
     cited_ids = [
         segment_id
-        for section in decision.sections
+        for section in draft.sections
+        if section.status == "grounded"
         for segment_id in section.citation_ids
     ]
     selected_ids = set(cited_ids)
     try:
         for section in draft.sections:
-            validate_natural_answer(section.text)
+            if section.status == "grounded":
+                # Pydantic validation already requires text for grounded
+                # sections; keep this boundary check defensive and explicit.
+                validate_natural_answer(section.text or "")
     except NaturalAnswerValidationError:
         return "unsafe_text"
 
@@ -286,13 +288,16 @@ def _render_grounded_sections(draft: GroundedDraft, citations: list[Citation]) -
     allowed = {citation.segment_id for citation in citations}
     sections: list[str] = []
     for section in draft.sections:
+        if section.status == "unsupported":
+            sections.append(UNSUPPORTED_EVIDENCE_TEXT)
+            continue
         ids = [
             segment_id
             for segment_id in section.citation_ids
             if segment_id in allowed
         ]
         markers = " ".join(f"[S{segment_id}]" for segment_id in ids)
-        sections.append(f"{section.text.strip()} {markers}".strip())
+        sections.append(f"{(section.text or '').strip()} {markers}".strip())
     return "\n\n".join(sections)
 
 
@@ -485,32 +490,6 @@ class AnswerPipeline:
                 )
                 continue
 
-            if isinstance(result.output.decision, NoRelevantEvidenceDraft):
-                if deps.pending_read_failures or deps.read_recovery_exhausted:
-                    composer_deps.last_failure_reason = "no_evidence_unavailable"
-                    composer_deps.invalid_draft_count += 1
-                    diagnostics.event(
-                        "citation_validated",
-                        error_code="answer_unavailable",
-                        call_index=attempts,
-                        retry_count=composer_deps.invalid_draft_count,
-                        failure_reason="no_evidence_unavailable",
-                        agent_phase="answer",
-                    )
-                    continue
-                diagnostics.event(
-                    "citation_validated",
-                    error_code="no_evidence",
-                    call_index=attempts,
-                    result_count=0,
-                    retry_count=composer_deps.invalid_draft_count,
-                    disposition="no_evidence",
-                    agent_phase="answer",
-                )
-                return self.no_evidence(
-                    request, diagnostics, deps.actions.read_action_results
-                )
-
             selected_ids = tuple(
                 segment_id
                 for section in result.output.sections
@@ -525,10 +504,14 @@ class AnswerPipeline:
                 for segment_id in selected_ids
             ]
             grounded_sections = tuple(
-                GroundedResponseSection(
-                    "grounded", section.text, tuple(section.citation_ids)
+                (
+                    GroundedResponseSection(
+                        "grounded", section.text or "", tuple(section.citation_ids)
+                    )
+                    if section.status == "grounded"
+                    else UnsupportedResponseSection("unsupported")
                 )
-                for section in result.output.decision.sections
+                for section in result.output.sections
             )
             diagnostics.event(
                 "citation_validated",

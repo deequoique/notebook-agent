@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Annotated, Literal
+from typing import Literal
 
 from typing_extensions import TypedDict
 
@@ -60,12 +60,31 @@ class RetrievalToolPayload(TypedDict):
 
 
 class GroundedSection(BaseModel):
-    """One model-authored section backed by current-run Citation IDs."""
+    """One explicit grounded or unsupported Composer section.
+
+    Unsupported sections intentionally carry no model-authored text. The
+    response boundary renders a fixed server-owned notice for that status.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    text: str = Field(min_length=1)
-    citation_ids: list[int] = Field(min_length=1, max_length=8)
+    status: Literal["grounded", "unsupported"] = "grounded"
+    text: str | None = Field(default=None, min_length=1)
+    citation_ids: list[int] = Field(default_factory=list, max_length=8)
+
+    @model_validator(mode="after")
+    def validate_status_payload(self) -> "GroundedSection":
+        if self.status == "grounded":
+            if self.text is None or not self.text.strip():
+                raise ValueError("grounded section requires text")
+            if not self.citation_ids:
+                raise ValueError("grounded section requires citations")
+            return self
+        if self.text is not None:
+            raise ValueError("unsupported section must not contain model text")
+        if self.citation_ids:
+            raise ValueError("unsupported section must not contain citations")
+        return self
 
 
 class GroundedDraft(BaseModel):
@@ -77,78 +96,24 @@ class GroundedDraft(BaseModel):
     sections: list[GroundedSection] = Field(min_length=1, max_length=8)
 
 
-class NoRelevantEvidenceDraft(BaseModel):
-    """An explicit answer-agent decision that no candidate supports the query."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    kind: Literal["no_relevant_evidence"]
-
-
-AnswerDecision = Annotated[
-    GroundedDraft | NoRelevantEvidenceDraft,
-    Field(discriminator="kind"),
-]
-
-# PydanticAI's prompted-output adapter requires an object schema and cannot
-# consume a RootModel whose schema is a top-level ``oneOf``.  Keep the
-# discriminated AnswerDecision as the canonical Python union, while this
-# object wrapper validates the same invariant on the provider wire.
 class AnswerDraft(BaseModel):
-    """Private structured composer output; never persisted verbatim."""
+    """Grounded Composer draft; never persisted verbatim."""
 
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal["grounded", "no_relevant_evidence"]
-    sections: list[GroundedSection] | None = None
-
-    @classmethod
-    def __get_pydantic_json_schema__(cls, core_schema, handler):
-        """Advertise the same no-sections invariant enforced at runtime."""
-
-        schema = handler(core_schema)
-        section_schema = dict(schema.get("$defs", {}).get("GroundedSection", {}))
-        schema["oneOf"] = [
-            {
-                "type": "object",
-                "properties": {
-                    "kind": {"const": "grounded"},
-                    "sections": {
-                        "type": "array",
-                        "items": section_schema,
-                        "minItems": 1,
-                        "maxItems": 8,
-                    },
-                },
-                "required": ["kind", "sections"],
-                "additionalProperties": False,
-            },
-            {
-                "type": "object",
-                "properties": {"kind": {"const": "no_relevant_evidence"}},
-                "required": ["kind"],
-                "not": {"required": ["sections"]},
-                "additionalProperties": False,
-            },
-        ]
-        return schema
+    kind: Literal["grounded"]
+    sections: list[GroundedSection] = Field(min_length=1, max_length=8)
 
     @model_validator(mode="after")
     def validate_disposition(self) -> "AnswerDraft":
-        if self.kind == "grounded":
-            if not self.sections:
-                raise ValueError("grounded answer requires sections")
-            if len(self.sections) > 8:
-                raise ValueError("grounded answer has too many sections")
-        elif self.sections is not None:
-            raise ValueError("no-evidence answer cannot contain sections")
+        if not self.sections:
+            raise ValueError("grounded answer requires sections")
+        if len(self.sections) > 8:
+            raise ValueError("grounded answer has too many sections")
         return self
 
     @property
-    def decision(self) -> AnswerDecision:
-        if self.kind == "no_relevant_evidence":
-            return NoRelevantEvidenceDraft(kind=self.kind)
-        # The validator above guarantees the non-empty section invariant.
+    def decision(self) -> GroundedDraft:
         return GroundedDraft(kind="grounded", sections=self.sections or [])
 # Historical import name retained for integrations; the section itself is
 # unchanged and the top-level duplicate selection field is gone.

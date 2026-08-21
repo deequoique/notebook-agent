@@ -83,6 +83,23 @@ class FakeKnowledgeServices:
         return self.citations[0]
 
 
+def _composer_for(segment_id: int = 3, text: str = "answer") -> TestModel:
+    return TestModel(
+        custom_output_text=json.dumps(
+            {
+                "kind": "grounded",
+                "sections": [
+                    {
+                        "status": "grounded",
+                        "text": text,
+                        "citation_ids": [segment_id],
+                    }
+                ],
+            }
+        )
+    )
+
+
 class FakeSubmission:
     def __init__(self, result):
         self.result = result
@@ -240,7 +257,15 @@ def _retrying_batch_model(tool_name, incomplete_urls, complete_urls):
     return FunctionModel(model), calls
 
 
-def _runtime(model, submission, pending, *, enabled=True, knowledge=None):
+def _runtime(
+    model,
+    submission,
+    pending,
+    *,
+    enabled=True,
+    knowledge=None,
+    composer_model=None,
+):
     settings = replace(
         Settings(),
         agent_timeout_seconds=2,
@@ -251,6 +276,7 @@ def _runtime(model, submission, pending, *, enabled=True, knowledge=None):
         settings,
         lambda _request: knowledge or FakeKnowledgeServices(),
         action_factory=lambda _request: services,
+        composer_model=composer_model,
     )
 
 
@@ -386,6 +412,7 @@ async def test_unrelated_question_with_live_pending_keeps_knowledge_guards():
         FakeSubmission(_queued_result()),
         pending,
         knowledge=knowledge,
+        composer_model=_composer_for(3),
     )
     result = await runtime.run(_request("知识库有什么"))
 
@@ -871,6 +898,7 @@ async def test_link_content_question_uses_search_not_write_tool():
         submission,
         FakePending(),
         knowledge=knowledge,
+        composer_model=_composer_for(3),
     )
 
     result = await runtime.run(

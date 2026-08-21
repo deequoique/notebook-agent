@@ -127,9 +127,9 @@ class _UnavailableReferenceServices(_Services):
 
     def search_segments(self, _query, *, limit=6):
         self.calls += 1
-        if self.scope == (("youtube", self.unavailable_id),):
-            return []
-        raise AssertionError("unexpected reference scope")
+        # URL context no longer imposes an exact server-side retrieval scope;
+        # this fixture models a tenant-wide search with no ready evidence.
+        return []
 
 
 class _MissingExpansionServices(_Services):
@@ -295,13 +295,13 @@ async def test_explicit_url_scope_filters_wrong_video_before_composer():
 
     result = await runtime.run(_request("https://youtu.be/M7lc1UVf-VE 讲了什么"))
 
-    assert services.scope == (("youtube", "M7lc1UVf-VE"),)
+    assert services.scope is None
     assert result.answer.citations == [right]
     assert "wrong evidence" not in result.answer.text
 
 
 @pytest.mark.asyncio
-async def test_exact_scope_citation_cannot_authorize_out_of_scope_item_search():
+async def test_url_context_does_not_block_tenant_item_search():
     wrong = Citation(
         item_id=1,
         segment_id=11,
@@ -358,9 +358,9 @@ async def test_exact_scope_citation_cannot_authorize_out_of_scope_item_search():
     ).run(_request("https://youtu.be/M7lc1UVf-VE 讲了什么"))
 
     assert result.answer.status == "failed"
-    assert result.answer.error_code == "item_scope_required"
-    assert services.item_ids == [None]
-    assert services.calls == 1
+    assert result.answer.error_code == "answer_unavailable"
+    assert services.item_ids == [None, 1]
+    assert services.calls == 2
 
 
 @pytest.mark.asyncio
@@ -402,9 +402,9 @@ async def test_exact_scope_prior_inventory_cannot_authorize_out_of_scope_search(
         )
     )
 
-    assert result.answer.status == "failed"
-    assert result.answer.error_code == "item_scope_required"
-    assert services.item_ids == []
+    assert result.answer.status == "not_found"
+    assert result.answer.error_code == "no_evidence"
+    assert services.item_ids == [1]
 
 
 @pytest.mark.asyncio
@@ -664,7 +664,7 @@ async def test_management_tools_are_hidden_for_explicit_url_questions():
 
     result = await runtime.run(_request("https://youtu.be/M7lc1UVf-VE 讲了什么"))
 
-    assert result.answer.error_code == "search_required"
+    assert result.answer.error_code is None
     assert "list_saved_items" not in visible_tools
     assert "get_saved_item" not in visible_tools
     assert "delete_saved_items" not in visible_tools

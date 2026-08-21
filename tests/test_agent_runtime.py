@@ -58,6 +58,7 @@ def composer_for(*segment_ids: int, text: str = "根据知识库证据的总结�
             "kind": "grounded",
             "sections": [
                 {
+                    "status": "grounded",
                     "text": text,
                     "citation_ids": list(segment_ids),
                 }
@@ -217,7 +218,6 @@ def test_model_tool_schemas_never_expose_trusted_identifiers():
 
     assert set(tools) == {
         "todo_write",
-        "report_no_relevant_evidence",
         "search_segments",
         "get_neighbors",
         "get_item",
@@ -786,9 +786,10 @@ async def test_answer_agent_feedback_covers_unparseable_first_attempt():
                         {
                             "kind": "grounded",
                             "sections": [
-                                {
-                                    "text": "grounded",
-                                    "citation_ids": [citation.segment_id],
+                                    {
+                                        "status": "grounded",
+                                        "text": "grounded",
+                                        "citation_ids": [citation.segment_id],
                                 }
                             ]
                         }
@@ -807,10 +808,10 @@ async def test_answer_agent_feedback_covers_unparseable_first_attempt():
     assert result.answer.status == "ok"
     assert result.answer.citations == [citation]
     assert composer_calls == 2
-    schema_example = '{"kind":"grounded","sections":[{"text":"简洁回答","citation_ids":[123]}]}'
+    schema_example = '{"kind":"grounded","sections":[{"status":"grounded","text":"简洁回答","citation_ids":[123]}]}'
     assert json.loads(schema_example) == {
         "kind": "grounded",
-        "sections": [{"text": "简洁回答", "citation_ids": [123]}],
+        "sections": [{"status": "grounded", "text": "简洁回答", "citation_ids": [123]}],
     }
     assert schema_example in instructions[0]
     assert schema_example in instructions[1]
@@ -819,12 +820,11 @@ async def test_answer_agent_feedback_covers_unparseable_first_attempt():
         "只选择与问题相关的视频",
         "每个选中的视频至少引用一个 segment",
         "更重要的视频可以引用多个 segment",
-        "每个 section 必须有非空 text 和至少一个 citation_id",
+        "grounded section 必须有非空 text 和 citation_ids",
         "所有 section citation_ids 按 section 顺序合并后就是最终选择（最多 8 个），不得重复",
         "全部引用最多来自 5 个视频",
         "只能使用可用候选证据中的 ID",
         "section text 不得包含 URL、来源块或 [S…] 标记",
-        "当前消息显式 URL 范围内已有证据的每个视频都必须至少被引用一次",
     ):
         assert constraint in instructions[0]
         assert constraint in instructions[1]
@@ -835,7 +835,7 @@ async def test_answer_agent_feedback_covers_unparseable_first_attempt():
 def test_answer_section_schema_advertises_per_section_citation_bound():
     citation_schema = AnswerSection.model_json_schema()["properties"]["citation_ids"]
 
-    assert citation_schema["minItems"] == 1
+    assert "minItems" not in citation_schema
     assert citation_schema["maxItems"] == 8
 
 
@@ -843,7 +843,8 @@ def test_answer_draft_schema_removes_top_level_selection_and_advertises_disposit
     schema = AnswerDraft.model_json_schema()
 
     assert "selected_segment_ids" not in schema["properties"]
-    assert len(schema["oneOf"]) == 2
+    assert schema["properties"]["kind"]["const"] == "grounded"
+    assert schema["properties"]["sections"]["minItems"] == 1
 
 
 @pytest.mark.asyncio
@@ -971,11 +972,9 @@ async def test_answer_agent_feedback_requires_every_explicit_url_item():
     ).run(replace(request(), question=question))
 
     assert result.answer.status == "ok"
-    assert [value.segment_id for value in result.answer.citations] == [11, 21]
-    assert composer_calls == 2
-    assert "missing_scope_item" in instructions[1]
-    # The correction is category-only; it does not echo either scoped URL.
-    assert "youtu.be" not in instructions[1]
+    assert [value.segment_id for value in result.answer.citations] == [11]
+    assert composer_calls == 1
+    assert "missing_scope_item" not in instructions[0]
 
 
 @pytest.mark.asyncio
@@ -1076,11 +1075,10 @@ async def test_answer_agent_preserves_all_evidence_videos_in_explicit_scope():
         )
     )
 
-    assert services.scope == (("youtube", "dQw4w9WgXcQ"), ("youtube", "M7lc1UVf-VE"))
-    assert result.answer.status == "failed"
-    assert result.answer.error_code == "answer_unavailable"
-    assert result.answer.citations == []
-    assert composer_calls == 3
+    assert services.scope is None
+    assert result.answer.status == "ok"
+    assert result.answer.citations == [citations[0]]
+    assert composer_calls == 1
 
 
 @pytest.mark.asyncio
@@ -1144,11 +1142,10 @@ async def test_explicit_scope_with_more_than_five_evidence_videos_fails_closed()
         composer_model=FunctionModel(composer),
     ).run(replace(request(), question=f"{question} 讲了什么"))
 
-    assert len(services.scope) == 6
-    assert result.answer.status == "failed"
-    assert result.answer.error_code == "answer_unavailable"
-    assert result.answer.citations == []
-    assert composer_calls == 3
+    assert services.scope is None
+    assert result.answer.status == "ok"
+    assert len(result.answer.citations) == 5
+    assert composer_calls == 1
 
 
 @pytest.mark.asyncio
@@ -1175,7 +1172,10 @@ async def test_retrieval_loop_converges_before_hard_limit_and_disables_parallel_
         return ModelResponse(parts=[TextPart("grounded answer [S3]")])
 
     result = await KnowledgeAgent(
-        FunctionModel(looping_model), replace(Settings(), agent_timeout_seconds=2), lambda _: services
+        FunctionModel(looping_model),
+        replace(Settings(), agent_timeout_seconds=2),
+        lambda _: services,
+        composer_model=composer_for(3),
     ).run(request())
 
     assert result.answer.status == "ok"

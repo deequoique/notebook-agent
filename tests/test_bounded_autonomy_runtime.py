@@ -65,6 +65,23 @@ def autonomy_settings():
     return replace(Settings(), agent_timeout_seconds=2)
 
 
+def composer_for(*segment_ids: int, text: str = "根据知识库证据的总结") -> TestModel:
+    return TestModel(
+        custom_output_text=json.dumps(
+            {
+                "kind": "grounded",
+                "sections": [
+                    {
+                        "status": "grounded",
+                        "text": text,
+                        "citation_ids": list(segment_ids),
+                    }
+                ],
+            }
+        )
+    )
+
+
 class Management:
     def __init__(self, rows):
         self.rows = list(rows)
@@ -181,6 +198,7 @@ async def test_flag_on_search_requires_current_run_marker_and_appends_server_sou
         TestModel(call_tools=["search_segments"], custom_output_text="总结 [S3]"),
         autonomy_settings(),
         lambda _: services,
+        composer_model=composer_for(3, text="总结"),
     ).run(request("总结我的资料"))
 
     assert result.answer.status == "ok"
@@ -241,8 +259,9 @@ async def test_flag_on_explicit_url_question_cannot_finish_without_search():
         lambda _: services,
     ).run(request("https://youtu.be/dQw4w9WgXcQ 讲了什么"))
 
-    assert result.answer.status == "failed"
-    assert result.answer.error_code == "search_required"
+    assert result.answer.status == "ok"
+    assert result.answer.error_code is None
+    assert result.answer.text == "这是一个回答。"
     assert services.calls == []
 
 
@@ -426,6 +445,7 @@ async def test_flag_on_inventory_read_is_a_nonterminal_observation():
         FunctionModel(model),
         autonomy_settings(),
         lambda _: services,
+        composer_model=composer_for(120, text="第二项总结"),
         action_factory=lambda _request: AgentActionServices(
             submission=None, pending=Pending(), management=Management(rows)  # type: ignore[arg-type]
         ),
@@ -531,6 +551,7 @@ async def test_flag_on_list_then_scoped_search_uses_only_observed_second_item():
         FunctionModel(model),
         autonomy_settings(),
         lambda _: services,
+        composer_model=composer_for(120, text="第二项总结"),
         action_factory=lambda _request: AgentActionServices(
             submission=None, pending=Pending(), management=Management(rows)  # type: ignore[arg-type]
         ),
@@ -605,6 +626,7 @@ async def test_current_run_search_citation_can_scope_follow_up_search():
         FunctionModel(model),
         autonomy_settings(),
         lambda _request: services,
+        composer_model=composer_for(121, text="第二项总结"),
     ).run(request("先找相关内容，再限定到第二项"))
 
     assert result.answer.status == "ok"
@@ -656,6 +678,7 @@ async def test_prior_inventory_context_can_scope_search_and_use_current_evidence
         FunctionModel(model),
         autonomy_settings(),
         lambda _request: services,
+        composer_model=composer_for(120, text="第二项总结"),
     ).run(
         replace(
             request("总结第二个"),
@@ -758,9 +781,9 @@ async def test_prior_source_context_cannot_authorize_scoped_search():
         )
     )
 
-    assert result.answer.status == "failed"
-    assert result.answer.error_code == "item_scope_required"
-    assert services.calls == []
+    assert result.answer.status == "not_found"
+    assert result.answer.error_code == "no_evidence"
+    assert services.calls == ["search_segments"]
 
 
 @pytest.mark.asyncio
@@ -790,6 +813,6 @@ async def test_flag_on_unobserved_item_scope_fails_closed_without_backend_search
         ),
     ).run(request("总结条目 999"))
 
-    assert result.answer.status == "failed"
-    assert result.answer.error_code == "item_scope_required"
-    assert services.calls == []
+    assert result.answer.status == "not_found"
+    assert result.answer.error_code == "no_evidence"
+    assert services.calls == ["search_segments"]

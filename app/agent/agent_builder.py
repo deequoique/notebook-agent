@@ -19,9 +19,11 @@ BOUNDED_AUTONOMY_INSTRUCTIONS = """
    不要为了形式调用知识工具，也不要伪造 Citation、来源区块或 URL。
 2. 需要私有知识时自行选择合适的知识工具；只有成功的本轮检索证据可以支持知识事实。
    成功检索后，最终回答必须在相关句子中使用本轮工具返回的精确 [S<segment_id>] 标记。
-   如果候选都不支持问题，检索成功后调用 report_no_relevant_evidence；不要为了满足引用要求
-   选择无关片段。不得猜测或复用历史 Citation ID，不得输出 URL 或服务器来源区块。
-3. 缺少可信指代或信息时先自然询问澄清，不要猜测条目、租户、作用域或工具参数。
+   只要本轮检索返回候选，就进入 grounded 回答；有证据的事实使用精确
+   [S<segment_id>] 标记，无法由候选确认的部分明确说明证据不足。不得猜测或复用历史
+   Citation ID，不得输出 URL 或服务器来源区块。
+3. 缺少可信指代或信息时先自然询问澄清，不要猜测租户或越过工具参数边界；
+   需要时可以自行选择全库检索或用 item_id 限定检索，服务器会校验条目归属和状态。
 4. 只有存在多个相互依赖的短步骤时才使用 todo_write；普通对话和单工具请求不要创建 Todo。
    Todo 只是本轮工作记忆，不代表工具成功、授权或副作用结果。
 5. 读工具可以按需组合；保存、删除、确认、取消和其他副作用工具仍由服务器结果决定，
@@ -67,8 +69,8 @@ def build_agent(
         rows: list[str] = []
         if context.recent_inventory:
             rows.append(
-                "近期库存参考（仅用于解析用户说的‘第几个’；item_id 是引用，不是授权，"
-                "使用前仍须调用工具确认）："
+                "近期库存参考（仅用于解析用户说的‘第几个’；item_id 是检索提示，不是授权，"
+                "服务器会在每次工具调用时重新校验）："
             )
             rows.extend(
                 f"{item.ordinal}. 《{item.title}》 (item_id={item.item_id})"
@@ -122,30 +124,6 @@ def build_agent(
             ]
         }
 
-    @agent.tool(prepare=policy.prepare_no_relevant_evidence)
-    def report_no_relevant_evidence(ctx: RunContext[AgentDeps]) -> dict:
-        """Record a server-owned no-evidence decision after a clean search."""
-
-        if (
-            ctx.deps.successful_searches < 1
-            or ctx.deps.pending_read_failures
-            or ctx.deps.read_recovery_exhausted
-            or ctx.deps.actions.outcome is not None
-        ):
-            raise ModelRetry(
-                "只有成功完成本轮检索且没有读取失败或终止操作时，才能报告没有相关证据。"
-            )
-        ctx.deps.no_relevant_evidence_requested = True
-        _, call_index = policy.execute_tool(
-            ctx.deps,
-            "report_no_relevant_evidence",
-            lambda: {"status": "ok", "disposition": "no_relevant_evidence"},
-        )
-        ctx.deps.tool_event(
-            "report_no_relevant_evidence", "succeeded", call_index, 0
-        )
-        return {"status": "ok", "disposition": "no_relevant_evidence"}
-
     @agent.instructions
     def retrieval_convergence_instruction(ctx: RunContext[AgentDeps]) -> str:
         """State the server-enforced retrieval phase without exposing internals."""
@@ -164,7 +142,7 @@ def build_agent(
     def pending_save_instruction(ctx: RunContext[AgentDeps]) -> str:
         """Inject only the current run's server-verified confirmation state."""
 
-        if ctx.deps.reference_scope:
+        if ctx.deps.reference_scope or ctx.deps.semantic_url_question:
             return ""
         snapshot = ctx.deps.actions.pending_save_snapshot()
         if not snapshot.active:
@@ -183,7 +161,7 @@ def build_agent(
     def pending_delete_instruction(ctx: RunContext[AgentDeps]) -> str:
         """Expose only count/kind for a trusted pending delete action."""
 
-        if ctx.deps.reference_scope:
+        if ctx.deps.reference_scope or ctx.deps.semantic_url_question:
             return ""
         snapshot = ctx.deps.actions.pending_delete_snapshot()
         if snapshot is None or not snapshot.active:
