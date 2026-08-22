@@ -1,6 +1,7 @@
 version: 1.0.0
 fixtures:
-  baseline: {url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", topic: "Rick Astley 和 Never Gonna Give You Up"}
+  # 用户提供的 deep-link 从 713s 开始；fixture 身份仍按 YouTube video ID 归一化。
+  baseline: {url: "https://www.youtube.com/watch?v=qz9tKlF431k&t=713s", topic: "Google Coding Interview With A High School Student"}
   comparison: {url: "https://www.youtube.com/watch?v=9bZkp7q19f0", topic: "PSY 和 Gangnam Style"}
   mutable: {url: "https://www.youtube.com/watch?v=jNQXAC9IVRw", topic: "YouTube 上的第一支视频", mutable: true}
 cases:

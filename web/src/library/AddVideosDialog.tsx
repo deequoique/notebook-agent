@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import { submitVideoBatch } from "../api/client";
+import { ApiError, submitVideoBatch } from "../api/client";
 import type { BatchSubmitInput, BatchSubmitResponse } from "../api/contracts";
 import {
   collectCollectionNames,
@@ -27,6 +27,22 @@ const resultCopy: Record<string, string> = {
   create_failed: "添加失败，请稍后重试",
   quota_exceeded: "已达到保存上限",
 };
+
+function submitErrorCopy(error: unknown): string {
+  if (!(error instanceof ApiError)) return "无法连接资料库，请检查网络后重试。";
+  switch (error.code) {
+    case "save_disabled":
+      return "当前部署暂未开放服务器端添加，请改用浏览器插件或稍后再试。";
+    case "quota_exceeded":
+      return "当前资料库已达到保存上限，可以先归档旧视频后再试。";
+    case "queue_unavailable":
+      return "视频链接已收到，但整理队列暂时不可用，请稍后重新提交。";
+    default:
+      return error.status >= 500
+        ? "资料库服务暂时没有响应，请稍后重试。"
+        : "添加没有完成，请检查链接后重试。";
+  }
+}
 
 export function AddVideosDialog({
   open,
@@ -118,7 +134,7 @@ export function AddVideosDialog({
     event.preventDefault();
     const submittedUrls = [...urls, urlDraft.trim()].filter(Boolean);
     if (submittedUrls.length === 0) {
-      setError("请至少粘贴一个 YouTube 链接。");
+      setError("请至少粘贴一个 YouTube 或 Bilibili 链接。");
       return;
     }
     if (submittedUrls.length > 10) {
@@ -140,9 +156,9 @@ export function AddVideosDialog({
       if (submissionGeneration !== submissionGenerationRef.current) return;
       setResult(nextResult);
       onSubmitted?.(nextResult);
-    } catch {
+    } catch (submitError) {
       if (submissionGeneration !== submissionGenerationRef.current) return;
-      setError("添加未完成，请检查网络后重试。");
+      setError(submitErrorCopy(submitError));
     } finally {
       if (submissionGeneration === submissionGenerationRef.current) setSubmitting(false);
     }
@@ -162,19 +178,20 @@ export function AddVideosDialog({
         <header className="dialog-header">
           <div>
             <p className="eyebrow">一次最多添加 10 个</p>
-            <h2 id="add-dialog-title">添加 YouTube 视频</h2>
+            <h2 id="add-dialog-title">添加视频链接</h2>
           </div>
           <button className="icon-button" type="button" aria-label="关闭添加视频窗口" onClick={onClose}>×</button>
         </header>
         <div className="field url-field">
           <span className="field-label-row">
-            <label htmlFor="url-draft">YouTube 链接，每行一个</label>
+            <label htmlFor="url-draft">YouTube 或 Bilibili 链接，每行一个</label>
             <small className="url-count" data-over-limit={urls.length > 10}>{urls.length} / 10</small>
           </span>
           <p className="field-help" id="url-draft-help">粘贴链接后按 Enter；也可以一次粘贴多行。</p>
+          <p className="field-help">支持 YouTube 与 Bilibili 普通视频链接。NTULearn 或服务器暂时无法读取的 YouTube 视频，可通过 <a href="/account/browser-companion">浏览器伴侣</a>保存。</p>
           <div className="url-token-input">
             {urls.length > 0 ? (
-              <ol className="url-tag-list" aria-label="已添加的 YouTube 链接">
+              <ol className="url-tag-list" aria-label="已添加的视频链接">
                 {urls.map((url, index) => (
                   <li className="url-tag" key={`${url}-${index}`}>
                     <span title={url}>{url}</span>
@@ -192,7 +209,7 @@ export function AddVideosDialog({
               spellCheck={false}
               rows={1}
               value={urlDraft}
-              placeholder={urls.length === 0 ? "粘贴 YouTube 链接" : "继续添加链接"}
+              placeholder={urls.length === 0 ? "粘贴 YouTube 或 Bilibili 链接" : "继续添加链接"}
               onChange={(event) => {
                 const next = event.target.value;
                 if (/\r?\n/u.test(next)) {

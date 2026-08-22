@@ -31,6 +31,7 @@ _STAGES = frozenset({
 _ROUTES = frozenset({"agent", "command", "duplicate", "action"})
 _TOOLS = frozenset({
     "search_segments", "get_neighbors", "get_item", "open_at", "todo_write",
+    "report_no_relevant_evidence",
     "request_save_confirmation", "save_videos", "confirm_video_save",
     "clarify_save_confirmation", "cancel_video_save", "list_saved_items",
     "get_saved_item", "update_saved_item", "delete_saved_items",
@@ -39,6 +40,13 @@ _TOOLS = frozenset({
 })
 _LIMITS = frozenset({"request", "tool_calls", "output_tokens", "unknown"})
 _AGENT_PHASES = frozenset({"retrieval", "answer"})
+_ERROR_CLASS_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}\Z")
+_ANSWER_FAILURE_REASONS = frozenset({
+    "invalid_structure", "unsafe_text", "missing_citation",
+    "invalid_citation", "unknown_citation", "duplicate_citation",
+    "too_many_segments", "too_many_items",
+    "missing_scope_item", "no_evidence_unavailable", "provider_failure",
+})
 _RECOVERY_CATEGORIES = frozenset({
     "transient_read", "read_unavailable", "missing_context",
     "policy_or_security", "side_effect_indeterminate", "provider_failure",
@@ -72,6 +80,7 @@ _ERRORS = frozenset({
     "transient_read", "read_unavailable", "answer_validation", "provider_failure",
     "todo_incomplete", "item_scope_required",
 })
+_DISPOSITIONS = frozenset({"grounded", "no_evidence", "canonical", "action", "failed"})
 
 
 def new_trace_id() -> str:
@@ -314,8 +323,12 @@ class RequestDiagnostics:
               recovery_action: str | None = None,
               recovery_outcome: str | None = None,
               recovery_count: int | None = None,
+              error_class: str | None = None,
+              failure_reason: str | None = None,
+              disposition: str | None = None,
               todo_used: bool | None = None) -> None:
         try:
+            safe_error_class = _safe_error_class(error_class)
             payload: dict[str, Any] = {
                 "event": "knowledge_request",
                 "stage": stage if stage in _STAGES else "agent_failed",
@@ -323,7 +336,9 @@ class RequestDiagnostics:
                 "tenant_id": self.tenant_id,
                 "duration_ms": _safe_int(duration_ms) if duration_ms is not None else max(0, int((time.monotonic() - self.started_at) * 1000)),
                 "error_code": error_code if error_code in _ERRORS else "-",
-                "error_class": type(exception).__name__ if exception is not None else "-",
+                "error_class": safe_error_class or (
+                    type(exception).__name__ if exception is not None else "-"
+                ),
             }
             if route in _ROUTES: payload["route"] = route
             if tool_name in _TOOLS: payload["tool_name"] = tool_name
@@ -331,6 +346,10 @@ class RequestDiagnostics:
             if agent_phase in _AGENT_PHASES: payload["agent_phase"] = agent_phase
             if error_category in _RECOVERY_CATEGORIES:
                 payload["error_category"] = error_category
+            if failure_reason in _ANSWER_FAILURE_REASONS:
+                payload["failure_reason"] = failure_reason
+            if disposition in _DISPOSITIONS:
+                payload["disposition"] = disposition
             if recovery_action in _RECOVERY_ACTIONS:
                 payload["recovery_action"] = recovery_action
             if recovery_outcome in _RECOVERY_OUTCOMES:
@@ -362,6 +381,19 @@ class RequestDiagnostics:
 
 def _safe_text(value: object, limit: int = 4096) -> str | None:
     return value[:limit] if isinstance(value, str) else None
+
+
+def _safe_error_class(value: object) -> str | None:
+    """Accept only a bounded class label supplied by an adapter.
+
+    Answer recovery deliberately supplies this label without the exception
+    object, so development diagnostics retain a useful failure category while
+    never serializing provider messages or response bodies.
+    """
+
+    if isinstance(value, str) and _ERROR_CLASS_RE.fullmatch(value):
+        return value
+    return None
 
 
 def _safe_int(value: object, *, none: bool = False) -> int | None:

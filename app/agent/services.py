@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.agent.limits import SEARCH_RESULT_LIMIT
 from app.agent.types import Citation
+from app.browser_capture import timestamp_url
 from app.channels.types import TenantContext
 from app.diagnostics import RequestDiagnostics
 from app.ingest.embed import EmbeddingError, EmbeddingProvider
@@ -50,8 +51,12 @@ def _title(item: ContentItem) -> str:
 
 
 def _url(item: ContentItem, segment: Segment | None = None) -> str:
-    if item.platform == "youtube" and segment is not None and segment.start_sec is not None:
-        return f"https://youtu.be/{item.platform_id}?t={int(float(segment.start_sec))}"
+    if (
+        item.platform in {"youtube", "bilibili", "ntu_kaltura"}
+        and segment is not None
+        and segment.start_sec is not None
+    ):
+        return timestamp_url(item.platform, item.url, float(segment.start_sec))
     if segment is not None and segment.anchor:
         return f"{item.url}#{segment.anchor}"
     return item.url

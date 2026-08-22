@@ -55,6 +55,19 @@ def test_hard_cut_has_overlap():
     assert overlap / (parts[0].end_sec - parts[0].start_sec) >= 0.15
 
 
+def test_hard_cut_advances_across_a_gap_larger_than_the_duration_ceiling():
+    cues = [
+        Cue(0, 1, "first"),
+        Cue(500, 501, "second"),
+        Cue(502, 503, "third"),
+    ]
+
+    parts = chunk(cues, lang="en")
+
+    assert [part.text for part in parts] == ["first", "second third"]
+    assert all(part.end_sec >= part.start_sec for part in parts)
+
+
 def test_language_density_targets_drive_hard_cut():
     english = chunk(_cues(["word " * 50] * 8, step=5), lang="en")
     chinese = chunk(_cues(["字" * 100] * 8, step=5), lang="zh")

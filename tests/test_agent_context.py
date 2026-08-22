@@ -22,6 +22,7 @@ CREATE TABLE content_item (
   saved_at DATETIME NOT NULL, why_saved TEXT, archived_at DATETIME,
   watch_state TEXT,
   watch_pos_sec INTEGER, content_hash TEXT, raw_object_key TEXT,
+  raw_format TEXT NOT NULL DEFAULT 'json3',
   text_source TEXT NOT NULL, state TEXT NOT NULL, fail_reason TEXT,
   deleted_at DATETIME, purge_claimed_at DATETIME,
   purge_attempts INTEGER NOT NULL DEFAULT 0, purge_error_code TEXT,

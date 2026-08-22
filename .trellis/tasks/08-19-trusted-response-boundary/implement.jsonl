@@ -1,0 +1,8 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/agent-retrieval-convergence.md", "reason": "Current bounded single-Agent, citation, source-rendering, and answer-recovery contract to revise deliberately."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Existing error ownership baseline for typed response and canonical/action codes."}
+{"file": ".trellis/spec/backend/langbot-channel-runtime.md", "reason": "Channel bridge trust and fail-closed payload boundary inherited by canonical/action sections."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Required mapping across Agent, renderer, persistence, MCP, channel, and worker boundaries."}
+{"file": ".trellis/tasks/archive/2026-08/08-18-agent-quality-benchmark/validation.md", "reason": "Reviewed live-run results and the exact four human failures motivating the redesign."}
+{"file": ".trellis/tasks/archive/2026-08/08-18-agent-quality-benchmark/research/human-review-trusted-section-findings-2026-08-19.md", "reason": "Evidence-backed forced-citation and flat-response root cause."}
+{"file": ".trellis/tasks/08-18-channel-save-link-routing/research/channel-save-link-route-analysis-2026-08-18.md", "reason": "Channel capability and save-confirmation incident that must consume the shared contract."}

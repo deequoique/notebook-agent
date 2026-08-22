@@ -1,0 +1,30 @@
+{
+  "id": "why-saved-collection-tags",
+  "name": "why-saved-collection-tags",
+  "title": "Why-saved collection tags",
+  "description": "Add folder-like collection tags to the Web library by encoding validated hashtags in why_saved, without changing the database or public API.",
+  "status": "completed",
+  "dev_type": "feature",
+  "scope": "frontend",
+  "package": "web",
+  "priority": "P2",
+  "creator": "codex",
+  "assignee": "codex",
+  "createdAt": "2026-08-09",
+  "completedAt": "2026-08-16",
+  "branch": "codex/why-saved-collections",
+  "base_branch": "codex/web-video-library-mvp",
+  "worktree_path": "C:/Users/raede/.codex/worktrees/why-saved-collections",
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "08-07-web-video-library-mvp",
+  "relatedFiles": [
+    "web/src/library",
+    "web/src/videos",
+    "web/src/styles.css"
+  ],
+  "notes": "User requested checking upstream first. upstream/main@a5d244e has no Web folder/collection API; ContentItem.tags contains YouTube metadata and must not be repurposed. Collections therefore remain a frontend interpretation of validated hashtags inside why_saved.",
+  "meta": {}
+}

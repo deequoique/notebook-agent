@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/agent-retrieval-convergence.md","reason":"Review retry accounting, exact scope, citation caps, persistence and diagnostics against the canonical contract."}
+{"file":".trellis/tasks/08-18-answer-agent-recovery/research/live-failure.md","reason":"Confirm implementation fixes the observed limit-to-projection failure without raising limits."}

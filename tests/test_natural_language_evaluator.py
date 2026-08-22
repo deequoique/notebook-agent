@@ -23,6 +23,7 @@ from evals.natural_language.runner import (
     redact_report,
     write_preflight_failure,
 )
+from evals.natural_language.__main__ import _select_human
 from evals.natural_language.schema import (
     Catalog,
     CatalogError,
@@ -90,8 +91,6 @@ def test_preflight_bounds_database_exception_text(monkeypatch, tmp_path):
         notebook_agent_env="development",
         agent_api_key="configured",
         zhipu_api_key="configured",
-        agent_save_enabled=True,
-        agent_item_management_enabled=True,
     )
     monkeypatch.setattr(
         "evals.natural_language.runner.get_session_factory", lambda: BrokenFactory()
@@ -108,8 +107,6 @@ def test_preflight_refuses_production_before_opening_database(monkeypatch, tmp_p
         notebook_agent_log_retrieval_content=False,
         agent_api_key="configured",
         zhipu_api_key="configured",
-        agent_save_enabled=True,
-        agent_item_management_enabled=True,
     )
     monkeypatch.setattr(
         "evals.natural_language.runner.get_session_factory",
@@ -155,12 +152,45 @@ def test_diagnostic_collector_correlates_only_safe_fields():
     collector.write(f'{{"event":"knowledge_request","stage":"model_attempt","request_id":"{request_id}","tenant_id":99}}\n')
     collector.write(f'{{"event":"knowledge_request","stage":"tool_call","request_id":"{request_id}","tool_name":"search_segments","call_index":1,"tool_outcome":"started","question":"private"}}\n')
     collector.write(f'{{"event":"knowledge_request","stage":"tool_call","request_id":"{request_id}","tool_name":"search_segments","call_index":1,"tool_outcome":"succeeded","tool_result":"private"}}\n')
+    collector.write(f'{{"event":"knowledge_request","stage":"agent_failed","request_id":"{request_id}","error_code":"limit","exception":"private"}}\n')
+    collector.write(f'{{"event":"retrieval_detail","request_id":"{request_id}","tool_name":"search_segments","call_index":1,"query":"private","item_id":153,"segment_id":1309,"start":0.03,"score":0.9,"title":"private","url":"private","excerpt":"private"}}\n')
     collector.write('not json\n')
     assert collector.has_model_attempt(request_id)
+    assert collector.agent_failure_code(request_id) == "limit"
     assert [trace.tool_name for trace in collector.traces_for(request_id)] == ["search_segments"]
     assert collector.traces_for(request_id)[0].outcome == "succeeded"
+    assert collector.has_retrieval_detail_call(request_id)
+    assert collector.retrieval_hits_for(request_id) == [
+        {"item_id": 153, "segment_id": 1309, "start_sec": 0.03}
+    ]
     assert collector.malformed_count == 1
     assert all("tenant_id" not in event and "question" not in event for event in collector.events_for(request_id))
+    assert all(
+        set(hit) <= {"item_id", "segment_id", "start_sec"}
+        for hit in collector.retrieval_hits_for(request_id)
+    )
+
+
+def test_diagnostic_collector_keeps_safe_citation_disposition_fields_only():
+    collector = DiagnosticCollector()
+    request_id = "c" * 32
+    collector.write(
+        f'{{"event":"knowledge_request","stage":"citation_validated",'
+        f'"request_id":"{request_id}","agent_phase":"answer",'
+        '"error_code":"answer_unavailable","failure_reason":"unknown_citation",'
+        '"disposition":"no_evidence","draft":"private","url":"private"}\n'
+    )
+    events = collector.events_for(request_id)
+    assert events == [
+        {
+            "stage": "citation_validated",
+            "request_id": request_id,
+            "agent_phase": "answer",
+            "error_code": "answer_unavailable",
+            "failure_reason": "unknown_citation",
+            "disposition": "no_evidence",
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -236,6 +266,14 @@ def test_scoring_requires_model_attempt_and_enforces_tool_sets():
 def test_global_threshold_overrides_catalog_threshold():
     assert _required_threshold(0.8, None) == 0.8
     assert _required_threshold(1.0, 0.5) == 0.5
+
+
+def test_human_case_selection_is_explicit_and_rejects_unknown_ids():
+    cases = [SimpleNamespace(id="human.he-001"), SimpleNamespace(id="human.he-002")]
+    args = SimpleNamespace(human_case_ids=["human.he-002"])
+    assert [case.id for case in _select_human(args, cases)] == ["human.he-002"]
+    with pytest.raises(EvalPreflightError, match="unknown human case"):
+        _select_human(SimpleNamespace(human_case_ids=["human.missing"]), cases)
 
 
 @pytest.mark.asyncio
@@ -469,6 +507,107 @@ def test_summary_separates_direct_mcp_from_model_tools():
     summary = _summary([result])
     assert summary["observed_tools"] == {}
     assert summary["direct_mcp_tools"] == {"restore_saved_items": 1}
+    assert summary["outcome_metrics"]["task_success_rate"] == {
+        "numerator": 1,
+        "denominator": 1,
+        "rate": 1.0,
+    }
+    assert summary["outcome_metrics"]["tool_policy_pass_rate"]["rate"] == 0.0
+    assert summary["outcome_metrics"]["conversation_state_pass_rate"]["rate"] is None
+    assert summary["performance"]["latency_ms_p50"] == 1
+    assert summary["performance"]["average_tool_calls_per_attempt"] == 0.0
+
+
+def test_summary_uses_safe_diagnostic_code_for_loop_limit_rate():
+    from evals.natural_language.runner import TurnResult
+
+    turn = TurnResult(
+        index=1,
+        route="model",
+        status="failed",
+        error_code="runtime_error",
+        request_id="a" * 32,
+        model_attempt=True,
+        tools=[],
+        citations_count=0,
+        elapsed_ms=10,
+        passed=False,
+        failures=["unexpected status: 'failed'"],
+        tool_policy_passed=True,
+        model_calls=2,
+        diagnostic_error_code="limit",
+    )
+    result = CaseResult(
+        "human.he-001",
+        "human",
+        "fail",
+        0.0,
+        1.0,
+        [AttemptResult(1, False, [turn])],
+    )
+
+    assert _summary([result])["performance"]["agent_loop_limit_rate"] == {
+        "numerator": 1,
+        "denominator": 1,
+        "rate": 1.0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_human_results_remain_pending_until_review(monkeypatch, tmp_path):
+    from evals.natural_language.fixtures import FixtureState
+    from evals.natural_language.quality import HumanEvalDataset
+    from evals.natural_language.runner import TurnResult
+
+    sample = {
+        "sample_id": "he-001",
+        "case_id": "retrieval.search",
+        "turn_index": 1,
+        "kind": "no_evidence",
+        "query": "不存在的问题",
+        "reference_answer": "没有证据",
+        "reference_points": ["没有证据"],
+        "answer_boundary": {"must_not_claim": ["存在"]},
+        "no_evidence": True,
+    }
+    evaluator = LiveEvaluator(
+        load_catalog(),
+        Settings(),
+        EvalConfig(False, None, tmp_path, 1, None, 30),
+        human_dataset=HumanEvalDataset.model_validate({
+            "schema_version": "1.0.0",
+            "dataset_id": "human-eval-v1",
+            "language": "zh-CN",
+            "samples": [sample],
+        }),
+    )
+    evaluator.fixture_state = FixtureState({}, frozenset({"ready_item"}), {})
+    turn = TurnResult(
+        index=1,
+        route="model",
+        status="ok",
+        error_code=None,
+        request_id="a" * 32,
+        model_attempt=True,
+        tools=[],
+        citations_count=0,
+        elapsed_ms=10,
+        passed=True,
+        automated_observations=["automatic metric missed"],
+    )
+
+    async def attempt(_case, attempt_number):
+        return AttemptResult(attempt_number, True, [turn])
+
+    monkeypatch.setattr(evaluator, "_run_attempt", attempt)
+    results = await evaluator.run(evaluator.human_cases(), repeat=1, threshold=None)
+
+    assert results[0].status == "pending_review"
+    assert results[0].reason == "awaiting_human_review"
+    summary = _summary(results)
+    assert summary["counts"]["pending_review"] == 1
+    assert summary["outcome_metrics"]["task_success_rate"]["rate"] is None
+
 
 
 def test_report_redaction_removes_sensitive_fields_and_values():

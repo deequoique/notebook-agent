@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <link rel="stylesheet" href="popup.css">
+    <title>Notebook Agent 浏览器伴侣</title>
+  </head>
+  <body>
+    <main class="popup-shell">
+      <header class="popup-brand">
+        <span class="brand-mark" aria-hidden="true"><i></i></span>
+        <div>
+          <p class="eyebrow">NOTEBOOK AGENT</p>
+          <p class="product-name">浏览器伴侣</p>
+        </div>
+        <span class="extension-label">CHROME</span>
+      </header>
+
+      <section class="popup-copy" aria-labelledby="popup-title">
+        <p class="section-label">当前页面 · 视频字幕</p>
+        <h1 id="popup-title">把正在看的视频，<em>带回资料库。</em></h1>
+        <div class="status-panel" data-tone="loading">
+          <span class="status-dot" aria-hidden="true"></span>
+          <p id="status" aria-live="polite">正在读取连接状态…</p>
+        </div>
+      </section>
+
+      <div class="popup-actions">
+        <button id="primary" type="button" disabled>请稍候</button>
+        <button id="disconnect" class="quiet" type="button" hidden>断开连接</button>
+      </div>
+
+      <footer class="privacy">
+        <strong>只取必要内容</strong>
+        <span>只提交字幕和公开元数据，不上传登录状态或音视频。</span>
+      </footer>
+    </main>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

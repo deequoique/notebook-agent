@@ -2,5 +2,6 @@
 {"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend security, regression, and validation checklist"}
 {"file": ".trellis/spec/frontend/state-management.md", "reason": "Verify old-tenant cache teardown and no persisted token state"}
 {"file": ".trellis/spec/frontend/type-safety.md", "reason": "Verify generated contract alignment and no handwritten DTO drift"}
+{"file": ".trellis/spec/frontend/account-linking.md", "reason": "Verify Bot link safety, token privacy, and account-linking behavior"}
 {"file": ".trellis/spec/backend/langbot-channel-runtime.md", "reason": "Verify Telegram bot readiness, privacy, and no Local Agent fallback"}
 {"file": ".trellis/tasks/08-05-knowledge-retrieval-agent/research/langbot-identity-spike.md", "reason": "Verify the planned integration preserves the proven identity boundary"}

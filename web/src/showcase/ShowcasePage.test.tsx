@@ -61,6 +61,10 @@ describe("ShowcasePage", () => {
     expect(screen.queryByRole("heading", { name: "多渠道使用者" })).not.toBeInTheDocument();
     expect(screen.getByText(/不会调用模型或上传数据/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /进入资料库/ })).toHaveAttribute("href", "/login");
+    expect(screen.getByRole("link", { name: "下载浏览器插件" })).toHaveAttribute(
+      "href",
+      "/assets/notebook-agent-browser-companion-production-0.1.3.zip",
+    );
     expect(screen.getByLabelText("从视频到可追溯答案的处理路径")).toBeInTheDocument();
     expect(screen.queryByText("来源可核对")).not.toBeInTheDocument();
     expect(container.querySelector(".instrument-status")).not.toBeInTheDocument();

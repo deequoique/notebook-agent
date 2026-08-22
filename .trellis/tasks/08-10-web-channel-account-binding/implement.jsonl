@@ -4,5 +4,6 @@
 {"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "Mutation, query, and session-invalid behavior"}
 {"file": ".trellis/spec/frontend/state-management.md", "reason": "Private cache rotation and ephemeral security-state rules"}
 {"file": ".trellis/spec/frontend/type-safety.md", "reason": "Generated OpenAPI schema ownership"}
+{"file": ".trellis/spec/frontend/account-linking.md", "reason": "Telegram Bot destination, token privacy, and account-linking UI contract"}
 {"file": ".trellis/spec/backend/langbot-channel-runtime.md", "reason": "Telegram adapter required-plugin and fail-closed bridge contract"}
 {"file": ".trellis/tasks/08-05-knowledge-retrieval-agent/research/langbot-identity-spike.md", "reason": "Evidence for trusted Telegram sender identity through the LangBot bridge"}

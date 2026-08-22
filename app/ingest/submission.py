@@ -17,6 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.channels.types import UserScope
+from app.connectors.bilibili import canonicalize_bilibili_url
 from app.connectors.youtube import YouTubeConnector
 from app.config import get_settings
 from app.models import (
@@ -412,6 +413,14 @@ def normalize_item_reference(url: str) -> ItemReference:
     parsed = urlparse(value)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise InvalidURL("invalid URL")
+    bilibili = canonicalize_bilibili_url(value)
+    if bilibili is not None:
+        platform_id, canonical_url = bilibili
+        return ItemReference(
+            platform="bilibili",
+            platform_id=platform_id,
+            canonical_url=canonical_url,
+        )
     hostname = (parsed.hostname or "").lower()
     if hostname not in {
         "youtu.be",
@@ -1170,7 +1179,16 @@ class IngestSubmissionService:
     ) -> None:
         try:
             with self._session_factory() as db:
-                dispatch = db.get(IngestDispatch, dispatch_id)
+                # Lock the row before checking pending. A worker may claim
+                # and complete the dispatch between an unlocked read and the
+                # publisher's state update; the lock makes this transaction
+                # observe the worker's committed state instead of clobbering
+                # it with enqueued/failed.
+                dispatch = db.scalar(
+                    select(IngestDispatch)
+                    .where(IngestDispatch.id == dispatch_id)
+                    .with_for_update()
+                )
                 if dispatch is None or dispatch.state != "pending":
                     return
                 dispatch.state = state

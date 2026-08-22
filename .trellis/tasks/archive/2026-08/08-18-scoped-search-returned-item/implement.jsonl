@@ -1,0 +1,3 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/tasks/08-18-scoped-search-returned-item/research/reproduction-evidence.md", "reason": "Safe live evidence and static root-cause path for the missing current-run Citation authorization case."}
+{"file": ".trellis/spec/backend/agent-retrieval-convergence.md", "reason": "Defines bounded retrieval, current-run evidence allow-list, exact reference scope, and required regressions."}

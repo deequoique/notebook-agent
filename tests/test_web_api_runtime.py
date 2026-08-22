@@ -26,7 +26,6 @@ def settings(**overrides):
         "web_origin": "https://kb.example.test",
         "web_cookie_secure": True,
         "web_publish_budget_seconds": 1.5,
-        "agent_save_enabled": True,
         "web_serve_static": True,
         "web_static_dir": "web/dist",
         "trash_retention_days": 30,
@@ -104,9 +103,9 @@ def test_runtime_exposes_only_the_enabled_login_channels():
     assert response.json()["web_login_channels"] == ["wechat"]
 
 
-def test_runtime_applies_the_global_save_switch_to_web_capabilities():
+def test_runtime_always_enables_web_save_capability():
     app = build_web_app(
-        settings(agent_save_enabled=False),
+        settings(),
         session_factory=lambda: None,
         publisher=lambda _dispatch_id: "task",
         object_store=object(),
@@ -117,7 +116,7 @@ def test_runtime_applies_the_global_save_switch_to_web_capabilities():
         response = client.get("/api/v1/capabilities")
 
     assert response.status_code == 200
-    assert response.json()["save_enabled"] is False
+    assert response.json()["save_enabled"] is True
 
 
 def test_runtime_can_run_api_only_without_a_static_build(tmp_path):

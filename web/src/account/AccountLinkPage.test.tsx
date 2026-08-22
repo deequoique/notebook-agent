@@ -34,10 +34,27 @@ describe("Telegram account linking page", () => {
     expect(screen.queryByText(/微信/)).not.toBeInTheDocument();
     expect(screen.getByText(/共用同一份私人资料库/)).toBeInTheDocument();
 
+    const botLinks = screen.getAllByRole("link", {
+      name: "@notebook_agent_bot（在新标签页打开）",
+    });
+    expect(botLinks).toHaveLength(2);
+    for (const link of botLinks) {
+      expect(link).toHaveAttribute("href", "https://t.me/notebook_agent_bot");
+      expect(link).toHaveAttribute("target", "_blank");
+      expect(link).toHaveAttribute("rel", "noopener noreferrer");
+      expect(link).toHaveTextContent("@notebook_agent_bot");
+    }
+
     await user.click(screen.getByRole("button", { name: "生成 Telegram 绑定码" }));
 
     expect(createToken).toHaveBeenCalledOnce();
     expect(await screen.findByText("/link temporary-token")).toBeInTheDocument();
+    for (const link of screen.getAllByRole("link", {
+      name: "@notebook_agent_bot（在新标签页打开）",
+    })) {
+      expect(link).toHaveAttribute("href", "https://t.me/notebook_agent_bot");
+      expect(link.getAttribute("href")).not.toContain("temporary-token");
+    }
     expect(screen.getByText(/短期有效，只能使用一次/)).toBeInTheDocument();
     expect(screen.getByLabelText("Telegram 绑定码")).toBeInTheDocument();
     expect(window.localStorage).toHaveLength(0);

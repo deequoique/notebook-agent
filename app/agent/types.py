@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Annotated, Literal
 
 from typing_extensions import TypedDict
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
 from app.agent.context import TurnContext
 from app.channels.types import TenantContext
@@ -59,17 +59,100 @@ class RetrievalToolPayload(TypedDict):
     reason: Literal["same_model_step", "budget_exhausted"] | None
 
 
-class AnswerSection(BaseModel):
-    """One composer-written section backed by server-owned segment ids."""
+class GroundedSection(BaseModel):
+    """One model-authored section backed by current-run Citation IDs."""
+
+    model_config = ConfigDict(extra="forbid")
 
     text: str = Field(min_length=1)
-    citation_ids: list[int] = Field(min_length=1)
+    citation_ids: list[int] = Field(min_length=1, max_length=8)
 
 
+class GroundedDraft(BaseModel):
+    """A grounded answer decision returned by the private answer Agent."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["grounded"]
+    sections: list[GroundedSection] = Field(min_length=1, max_length=8)
+
+
+class NoRelevantEvidenceDraft(BaseModel):
+    """An explicit answer-agent decision that no candidate supports the query."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["no_relevant_evidence"]
+
+
+AnswerDecision = Annotated[
+    GroundedDraft | NoRelevantEvidenceDraft,
+    Field(discriminator="kind"),
+]
+
+# PydanticAI's prompted-output adapter requires an object schema and cannot
+# consume a RootModel whose schema is a top-level ``oneOf``.  Keep the
+# discriminated AnswerDecision as the canonical Python union, while this
+# object wrapper validates the same invariant on the provider wire.
 class AnswerDraft(BaseModel):
     """Private structured composer output; never persisted verbatim."""
 
-    sections: list[AnswerSection] = Field(min_length=1, max_length=8)
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["grounded", "no_relevant_evidence"]
+    sections: list[GroundedSection] | None = None
+
+    @classmethod
+    def __get_pydantic_json_schema__(cls, core_schema, handler):
+        """Advertise the same no-sections invariant enforced at runtime."""
+
+        schema = handler(core_schema)
+        section_schema = dict(schema.get("$defs", {}).get("GroundedSection", {}))
+        schema["oneOf"] = [
+            {
+                "type": "object",
+                "properties": {
+                    "kind": {"const": "grounded"},
+                    "sections": {
+                        "type": "array",
+                        "items": section_schema,
+                        "minItems": 1,
+                        "maxItems": 8,
+                    },
+                },
+                "required": ["kind", "sections"],
+                "additionalProperties": False,
+            },
+            {
+                "type": "object",
+                "properties": {"kind": {"const": "no_relevant_evidence"}},
+                "required": ["kind"],
+                "not": {"required": ["sections"]},
+                "additionalProperties": False,
+            },
+        ]
+        return schema
+
+    @model_validator(mode="after")
+    def validate_disposition(self) -> "AnswerDraft":
+        if self.kind == "grounded":
+            if not self.sections:
+                raise ValueError("grounded answer requires sections")
+            if len(self.sections) > 8:
+                raise ValueError("grounded answer has too many sections")
+        elif self.sections is not None:
+            raise ValueError("no-evidence answer cannot contain sections")
+        return self
+
+    @property
+    def decision(self) -> AnswerDecision:
+        if self.kind == "no_relevant_evidence":
+            return NoRelevantEvidenceDraft(kind=self.kind)
+        # The validator above guarantees the non-empty section invariant.
+        return GroundedDraft(kind="grounded", sections=self.sections or [])
+# Historical import name retained for integrations; the section itself is
+# unchanged and the top-level duplicate selection field is gone.
+AnswerSection = GroundedSection
 
 
 @dataclass(frozen=True)

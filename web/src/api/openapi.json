@@ -157,12 +157,219 @@
         "title": "BatchSaveResponse",
         "type": "object"
       },
+      "BrowserCaptureRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "canonical_url": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Canonical Url",
+            "type": "string"
+          },
+          "caption": {
+            "$ref": "#/components/schemas/CaptureCaption"
+          },
+          "client_version": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Client Version",
+            "type": "string"
+          },
+          "content_hash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/CaptureMetadata"
+          },
+          "page_url": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Url"
+          },
+          "platform": {
+            "enum": [
+              "youtube",
+              "ntu_kaltura"
+            ],
+            "title": "Platform",
+            "type": "string"
+          },
+          "platform_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Platform Id",
+            "type": "string"
+          },
+          "protocol_version": {
+            "const": "capture.v1",
+            "title": "Protocol Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol_version",
+          "client_version",
+          "platform",
+          "platform_id",
+          "canonical_url",
+          "metadata",
+          "caption",
+          "content_hash"
+        ],
+        "title": "BrowserCaptureRequest",
+        "type": "object"
+      },
+      "BrowserCaptureResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "capture_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capture Id"
+          },
+          "item_public_id": {
+            "title": "Item Public Id",
+            "type": "string"
+          },
+          "lifecycle": {
+            "title": "Lifecycle",
+            "type": "string"
+          },
+          "platform": {
+            "title": "Platform",
+            "type": "string"
+          },
+          "safe_error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Safe Error Code"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "capture_id",
+          "item_public_id",
+          "platform",
+          "status",
+          "lifecycle"
+        ],
+        "title": "BrowserCaptureResponse",
+        "type": "object"
+      },
+      "BrowserDeviceListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "devices": {
+            "items": {
+              "$ref": "#/components/schemas/BrowserDeviceResponse"
+            },
+            "title": "Devices",
+            "type": "array"
+          }
+        },
+        "required": [
+          "devices"
+        ],
+        "title": "BrowserDeviceListResponse",
+        "type": "object"
+      },
+      "BrowserDeviceResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "client_label": {
+            "title": "Client Label",
+            "type": "string"
+          },
+          "client_version": {
+            "title": "Client Version",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "device_id": {
+            "title": "Device Id",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          }
+        },
+        "required": [
+          "device_id",
+          "client_label",
+          "client_version",
+          "expires_at",
+          "created_at",
+          "last_used_at",
+          "revoked_at"
+        ],
+        "title": "BrowserDeviceResponse",
+        "type": "object"
+      },
       "CapabilitiesResponse": {
         "additionalProperties": false,
         "properties": {
           "archive": {
             "default": true,
             "title": "Archive",
+            "type": "boolean"
+          },
+          "browser_companion": {
+            "default": true,
+            "title": "Browser Companion",
             "type": "boolean"
           },
           "chat": {
@@ -187,10 +394,16 @@
           },
           "supported_platforms": {
             "default": [
-              "youtube"
+              "youtube",
+              "bilibili",
+              "ntu_kaltura"
             ],
             "items": {
-              "const": "youtube",
+              "enum": [
+                "youtube",
+                "bilibili",
+                "ntu_kaltura"
+              ],
               "type": "string"
             },
             "title": "Supported Platforms",
@@ -219,6 +432,231 @@
           }
         },
         "title": "CapabilitiesResponse",
+        "type": "object"
+      },
+      "CaptureCaption": {
+        "additionalProperties": false,
+        "properties": {
+          "cues": {
+            "items": {
+              "$ref": "#/components/schemas/CaptureCue"
+            },
+            "maxItems": 50000,
+            "title": "Cues",
+            "type": "array"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "official_cc",
+                  "auto_caption"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "status": {
+            "enum": [
+              "available",
+              "unavailable"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "CaptureCaption",
+        "type": "object"
+      },
+      "CaptureChapter": {
+        "additionalProperties": false,
+        "properties": {
+          "end_sec": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Sec"
+          },
+          "start_sec": {
+            "minimum": 0.0,
+            "title": "Start Sec",
+            "type": "number"
+          },
+          "title": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "start_sec"
+        ],
+        "title": "CaptureChapter",
+        "type": "object"
+      },
+      "CaptureCue": {
+        "additionalProperties": false,
+        "properties": {
+          "end_sec": {
+            "minimum": 0.0,
+            "title": "End Sec",
+            "type": "number"
+          },
+          "start_sec": {
+            "minimum": 0.0,
+            "title": "Start Sec",
+            "type": "number"
+          },
+          "text": {
+            "maxLength": 10000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start_sec",
+          "end_sec",
+          "text"
+        ],
+        "title": "CaptureCue",
+        "type": "object"
+      },
+      "CaptureMetadata": {
+        "additionalProperties": false,
+        "properties": {
+          "author": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author"
+          },
+          "chapters": {
+            "items": {
+              "$ref": "#/components/schemas/CaptureChapter"
+            },
+            "maxItems": 1000,
+            "title": "Chapters",
+            "type": "array"
+          },
+          "cover_url": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cover Url"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 50000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "duration_sec": {
+            "anyOf": [
+              {
+                "maximum": 31536000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Sec"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published At"
+          },
+          "tags": {
+            "items": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Tags",
+            "type": "array"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "CaptureMetadata",
         "type": "object"
       },
       "ChallengeCreateRequest": {
@@ -754,6 +1192,19 @@
         "title": "ErrorResponse",
         "type": "object"
       },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
       "HealthResponse": {
         "additionalProperties": false,
         "properties": {
@@ -1078,6 +1529,154 @@
         "title": "MessageInput",
         "type": "object"
       },
+      "PairingApprovalResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "pairing_id": {
+            "title": "Pairing Id",
+            "type": "string"
+          },
+          "status": {
+            "const": "approved",
+            "default": "approved",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pairing_id",
+          "expires_at"
+        ],
+        "title": "PairingApprovalResponse",
+        "type": "object"
+      },
+      "PairingCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "challenge": {
+            "maxLength": 128,
+            "minLength": 43,
+            "title": "Challenge",
+            "type": "string"
+          },
+          "client_label": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Client Label",
+            "type": "string"
+          },
+          "client_version": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Client Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "challenge",
+          "client_label",
+          "client_version"
+        ],
+        "title": "PairingCreateRequest",
+        "type": "object"
+      },
+      "PairingCreateResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "approval_url": {
+            "title": "Approval Url",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "pairing_id": {
+            "title": "Pairing Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pairing_id",
+          "approval_url",
+          "expires_at"
+        ],
+        "title": "PairingCreateResponse",
+        "type": "object"
+      },
+      "PairingExchangeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "verifier": {
+            "maxLength": 128,
+            "minLength": 43,
+            "title": "Verifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "verifier"
+        ],
+        "title": "PairingExchangeRequest",
+        "type": "object"
+      },
+      "PairingExchangeResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "access_token": {
+            "title": "Access Token",
+            "type": "string"
+          },
+          "device_id": {
+            "title": "Device Id",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "token_type": {
+            "const": "Bearer",
+            "default": "Bearer",
+            "title": "Token Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_id",
+          "access_token",
+          "expires_at"
+        ],
+        "title": "PairingExchangeResponse",
+        "type": "object"
+      },
+      "PairingStatusResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "enum": [
+              "pending",
+              "approved",
+              "expired",
+              "used"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "PairingStatusResponse",
+        "type": "object"
+      },
       "SessionResponse": {
         "additionalProperties": false,
         "properties": {
@@ -1172,6 +1771,46 @@
         "title": "TranscriptPageResponse",
         "type": "object"
       },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
       "WhySavedRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1193,6 +1832,10 @@
       }
     },
     "securitySchemes": {
+      "BrowserCompanionBearer": {
+        "scheme": "bearer",
+        "type": "http"
+      },
       "SessionCookie": {
         "in": "cookie",
         "name": "__Host-kb_session",
@@ -1327,11 +1970,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AuthErrorResponse"
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Validation Error"
           },
           "500": {
             "content": {
@@ -1467,6 +2110,317 @@
         "summary": "Verify",
         "tags": [
           "authentication"
+        ]
+      }
+    },
+    "/api/v1/browser-companion/devices": {
+      "get": {
+        "operationId": "list_devices_api_v1_browser_companion_devices_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowserDeviceListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Devices",
+        "tags": [
+          "browser-companion"
+        ]
+      }
+    },
+    "/api/v1/browser-companion/devices/{device_id}": {
+      "delete": {
+        "operationId": "revoke_device_api_v1_browser_companion_devices__device_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "device_id",
+            "required": true,
+            "schema": {
+              "title": "Device Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Device",
+        "tags": [
+          "browser-companion"
+        ]
+      }
+    },
+    "/api/v1/browser-companion/extension/captures": {
+      "post": {
+        "operationId": "submit_capture_api_v1_browser_companion_extension_captures_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BrowserCaptureRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowserCaptureResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BrowserCompanionBearer": []
+          }
+        ],
+        "summary": "Submit Capture",
+        "tags": [
+          "browser-companion"
+        ]
+      }
+    },
+    "/api/v1/browser-companion/extension/grant": {
+      "delete": {
+        "operationId": "disconnect_extension_api_v1_browser_companion_extension_grant_delete",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "BrowserCompanionBearer": []
+          }
+        ],
+        "summary": "Disconnect Extension",
+        "tags": [
+          "browser-companion"
+        ]
+      }
+    },
+    "/api/v1/browser-companion/extension/pairings": {
+      "post": {
+        "operationId": "create_pairing_api_v1_browser_companion_extension_pairings_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PairingCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PairingCreateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Pairing",
+        "tags": [
+          "browser-companion"
+        ]
+      }
+    },
+    "/api/v1/browser-companion/extension/pairings/{pairing_id}": {
+      "get": {
+        "operationId": "pairing_status_api_v1_browser_companion_extension_pairings__pairing_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pairing_id",
+            "required": true,
+            "schema": {
+              "title": "Pairing Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PairingStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Pairing Status",
+        "tags": [
+          "browser-companion"
+        ]
+      }
+    },
+    "/api/v1/browser-companion/extension/pairings/{pairing_id}:exchange": {
+      "post": {
+        "operationId": "exchange_pairing_api_v1_browser_companion_extension_pairings__pairing_id__exchange_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pairing_id",
+            "required": true,
+            "schema": {
+              "title": "Pairing Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PairingExchangeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PairingExchangeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Exchange Pairing",
+        "tags": [
+          "browser-companion"
+        ]
+      }
+    },
+    "/api/v1/browser-companion/pairings/{pairing_id}:approve": {
+      "post": {
+        "operationId": "approve_pairing_api_v1_browser_companion_pairings__pairing_id__approve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pairing_id",
+            "required": true,
+            "schema": {
+              "title": "Pairing Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PairingApprovalResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Approve Pairing",
+        "tags": [
+          "browser-companion"
         ]
       }
     },

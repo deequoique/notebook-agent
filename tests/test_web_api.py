@@ -145,6 +145,7 @@ def test_production_web_auth_requires_explicit_valid_provider():
     common = {
         "database_url": "sqlite://",
         "notebook_agent_env": "production",
+        "notebook_agent_log_retrieval_content": False,
         "web_auth_enabled": True,
         "web_public_origin": "https://app.example.test",
         "web_auth_secret": "x" * 32,
@@ -158,6 +159,7 @@ def test_production_web_auth_requires_explicit_valid_provider():
 def test_smtp_config_does_not_require_resend_and_validates_its_own_fields():
     settings = _email_settings(
         notebook_agent_env="production",
+        notebook_agent_log_retrieval_content=False,
         email_provider="smtp",
         smtp_host="smtp.example.test",
         smtp_username="smtp-user",

@@ -19,6 +19,8 @@
    - Add `web/src/account/AccountLinkPage.tsx` and a colocated test.
    - Implement explicit generation/regeneration, visible `/link` instruction, clipboard feedback,
      `/link web` guidance, pasted-token validation, pending duplicate protection, and safe error copy.
+   - Show a safe external link to `https://t.me/notebook_agent_bot` beside both binding directions; display
+     `@notebook_agent_bot` as the destination and never place a binding code in the URL.
    - Keep token state ephemeral and do not render a WeChat option.
 
 4. Integrate the route and account menu.
@@ -35,7 +37,7 @@
 6. Add mobile-first styling and accessibility coverage.
    - Extend `web/src/styles.css` with existing variables and BEM-like names.
    - Test labels, visible alerts/live regions, pending disablement, copy fallback, focusable controls, and
-     Telegram-specific instructions.
+     Telegram-specific instructions, including both Bot links and their exact safe destination.
    - Manually inspect 390x844 and desktop layouts, keyboard flow, focus, overflow, and console cleanliness.
 
 7. Validate both directions end to end.

@@ -25,6 +25,7 @@ const args = [join(repoRoot, "scripts", "export_web_openapi.py")];
 if (mode === "check") args.push("--check");
 const result = spawnSync(python, args, {
   cwd: repoRoot,
+  env: { ...process.env, PYTHONPATH: repoRoot },
   stdio: "inherit",
 });
 

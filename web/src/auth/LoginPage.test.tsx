@@ -9,6 +9,7 @@ import { challengePollInterval, LoginPage } from "./LoginPage";
 
 const capabilities: Capabilities = {
   supported_platforms: ["youtube"],
+  browser_companion: true,
   web_login_channels: ["telegram", "wechat"],
   save_enabled: true,
   max_save_batch_size: 10,
@@ -38,6 +39,11 @@ describe("login page", () => {
     const wechat = await screen.findByRole("button", { name: "使用微信登录" });
     const telegram = screen.getByRole("button", { name: "使用 Telegram 登录" });
     expect(container.querySelector(".wordmark .brand-logo")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "获取浏览器插件" })).toHaveAttribute(
+      "href",
+      "/assets/notebook-agent-browser-companion-production-0.1.3.zip",
+    );
+    expect(screen.getByRole("link", { name: "获取浏览器插件" })).toHaveAttribute("download");
     expect(within(wechat).getByTestId("wechat-brand-icon")).toBeInTheDocument();
     expect(within(telegram).getByTestId("telegram-brand-icon")).toBeInTheDocument();
     expect(screen.queryByText("主要方式")).not.toBeInTheDocument();

@@ -191,7 +191,6 @@ async def test_signed_save_actions_are_durable_and_exactly_once(db_factory):
 
     settings = replace(
         Settings(),
-        agent_save_enabled=True,
         agent_timeout_seconds=2,
     )
     agent = KnowledgeAgent(
@@ -434,7 +433,6 @@ async def test_channel_delete_confirmation_chain_survives_real_clarification(db_
 
     settings = replace(
         Settings(),
-        agent_item_management_enabled=True,
         agent_timeout_seconds=2,
     )
     agent = KnowledgeAgent(
@@ -575,7 +573,6 @@ async def test_channel_new_is_blocked_while_delete_effect_applies_then_recovers(
 
     settings = replace(
         Settings(),
-        agent_item_management_enabled=True,
         agent_timeout_seconds=2,
     )
     agent = KnowledgeAgent(
@@ -759,7 +756,7 @@ async def test_unrelated_question_keeps_live_pending_action_unchanged(db_factory
         )
 
     settings = replace(
-        Settings(), agent_save_enabled=True, agent_timeout_seconds=2
+        Settings(), agent_timeout_seconds=2
     )
     agent = KnowledgeAgent(
         FunctionModel(model),

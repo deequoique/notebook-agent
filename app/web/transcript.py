@@ -8,12 +8,13 @@ import hashlib
 import json
 import math
 from typing import Protocol
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from sqlalchemy import select
 
 from app.connectors.base import Cue, TransientFetchError
+from app.connectors.bilibili import parse_srt
 from app.connectors.youtube import parse_json3
+from app.browser_capture import parse_canonical_transcript, timestamp_url
 from app.models import ContentItem
 from app.object_store import ObjectStoreError, ObjectTooLarge
 
@@ -43,13 +44,6 @@ class TranscriptPage:
     next_cursor: str | None
 
 
-def _timestamp_url(url: str, seconds: float) -> str:
-    parts = urlsplit(url)
-    query = dict(parse_qsl(parts.query, keep_blank_values=True))
-    query["t"] = str(max(0, int(seconds)))
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
-
-
 def _encode_cursor(content_hash: str, index: int) -> str:
     raw = json.dumps({"h": content_hash, "i": index}, separators=(",", ":")).encode()
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
@@ -69,7 +63,9 @@ def _decode_cursor(cursor: str, content_hash: str) -> int:
         raise TranscriptError("transcript_invalid") from exc
 
 
-def _blocks(cues: list[Cue], source_url: str) -> list[TranscriptBlock]:
+def _blocks(
+    cues: list[Cue], source_url: str, *, platform: str = "youtube"
+) -> list[TranscriptBlock]:
     cleaned: list[tuple[float, float, str]] = []
     previous_text: str | None = None
     previous_end = 0.0
@@ -97,7 +93,9 @@ def _blocks(cues: list[Cue], source_url: str) -> list[TranscriptBlock]:
                 continue
         merged.append((start, end, text))
     return [
-        TranscriptBlock(index, start, end, text, _timestamp_url(source_url, start))
+        TranscriptBlock(
+            index, start, end, text, timestamp_url(platform, source_url, start)
+        )
         for index, (start, end, text) in enumerate(merged)
     ]
 
@@ -137,6 +135,10 @@ class TranscriptService:
                 raise TranscriptError("transcript_unavailable")
             key = item.raw_object_key
             source_url = item.url
+            platform = getattr(item, "platform", "youtube")
+            raw_format = getattr(item, "raw_format", "json3")
+            text_source = getattr(item, "text_source", "official_cc")
+            language = getattr(item, "lang", None) or "und"
         if not key.startswith(f"{scope.app_user_id}/"):
             raise TranscriptError("transcript_unavailable")
         try:
@@ -146,9 +148,21 @@ class TranscriptService:
         except ObjectStoreError as exc:
             raise TranscriptError("transcript_unavailable") from exc
         try:
-            cues = parse_json3(body)
-            blocks = _blocks(cues, source_url)
-        except (TransientFetchError, TranscriptError) as exc:
+            if raw_format == "capture_v1":
+                parsed = parse_canonical_transcript(
+                    body,
+                    source=text_source,
+                    language=language,
+                )
+                cues = parsed.cues
+            elif raw_format == "json3":
+                cues = parse_json3(body)
+            elif raw_format == "srt":
+                cues = parse_srt(body)
+            else:
+                raise TranscriptError("transcript_invalid")
+            blocks = _blocks(cues, source_url, platform=platform)
+        except (TransientFetchError, TranscriptError, ValueError) as exc:
             raise TranscriptError("transcript_invalid") from exc
         revision = hashlib.sha256(body).hexdigest()
         index = _decode_cursor(cursor, revision) if cursor else 0

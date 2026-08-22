@@ -15,3 +15,8 @@
 # stable on Windows so core.autocrlf cannot create false contract drift.
 web/src/api/openapi.json text eol=lf
 web/src/api/schema.d.ts text eol=lf
+
+# Browser-companion download bundles include these files byte-for-byte.
+# Pin their endings so Windows checkouts reproduce the committed ZIPs.
+extension/popup.html text eol=lf
+extension/popup.css text eol=lf

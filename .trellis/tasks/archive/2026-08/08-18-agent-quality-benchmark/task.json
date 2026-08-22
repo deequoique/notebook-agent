@@ -1,0 +1,29 @@
+{
+  "id": "agent-quality-benchmark",
+  "name": "agent-quality-benchmark",
+  "title": "建立带 Gold Evidence 的 Agent 质量 Benchmark",
+  "description": "将现有自然语言行为契约评测扩展为可验证检索质量、任务成功率、人工回答质量和可靠性/性能基线；第一阶段优先为 15–20 条检索样本加入 gold item/segment/timestamp，并保留真实模型 tool trace 与失败样本。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "lane",
+  "assignee": "lane",
+  "createdAt": "2026-08-18",
+  "completedAt": "2026-08-19",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "08-18-scoped-search-returned-item",
+    "08-18-answer-agent-recovery"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

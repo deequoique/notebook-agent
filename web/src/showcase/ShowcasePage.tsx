@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { BrandLogo } from "../app/BrandLogo";
+import { BROWSER_COMPANION_DOWNLOAD_URL } from "../app/browserCompanion";
 import { RouteLink } from "../app/RouteTransition";
 
 type DemoId = "product" | "ai" | "practice";
@@ -282,7 +283,10 @@ export function ShowcasePage() {
           <a href="#process">使用流程</a>
           <a href="#demo">试用场景</a>
         </nav>
-        <RouteLink className="showcase-nav__cta" to="/login">进入资料库 <ArrowIcon /></RouteLink>
+        <div className="showcase-nav__actions">
+          <a className="showcase-nav__companion" download href={BROWSER_COMPANION_DOWNLOAD_URL}>下载浏览器插件</a>
+          <RouteLink className="showcase-nav__cta" to="/login">进入资料库 <ArrowIcon /></RouteLink>
+        </div>
       </header>
 
       <main id="showcase-main" tabIndex={-1}>

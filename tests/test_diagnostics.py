@@ -64,6 +64,29 @@ def test_diagnostics_allow_phase_and_skipped_tool_without_content(caplog):
     assert answer_limit["limit_kind"] == "output_tokens"
 
 
+def test_diagnostics_allowlists_answer_failure_reason_without_private_content(caplog):
+    diagnostics = RequestDiagnostics.start("a" * 32, 7)
+
+    with caplog.at_level(logging.INFO, logger="notebook_agent.runtime"):
+        diagnostics.event(
+            "agent_failed",
+            error_code="answer_unavailable",
+            agent_phase="answer",
+            failure_reason="invalid_citation",
+        )
+        diagnostics.event(
+            "agent_failed",
+            error_code="answer_unavailable",
+            agent_phase="answer",
+            failure_reason="PRIVATE-draft-and-provider-payload",
+        )
+
+    allowed, rejected = [record.diagnostic_payload for record in caplog.records[-2:]]
+    assert allowed["failure_reason"] == "invalid_citation"
+    assert "failure_reason" not in rejected
+    assert "PRIVATE-draft-and-provider-payload" not in json.dumps([allowed, rejected])
+
+
 def test_diagnostics_allow_bounded_todo_and_recovery_error_codes_without_content(caplog):
     diagnostics = RequestDiagnostics.start("a" * 32, 7)
     private_todo = "choose https://private.example/item/42"
@@ -231,12 +254,12 @@ def test_settings_validate_composer_provider_budget(monkeypatch):
     with pytest.raises(ValueError, match="AGENT_COMPOSER_MAX_TOKENS must be positive"):
         Settings()
 
-    monkeypatch.setenv("AGENT_COMPOSER_MAX_TOKENS", "1001")
+    monkeypatch.setenv("AGENT_COMPOSER_MAX_TOKENS", "2001")
     with pytest.raises(ValueError, match="must not exceed AGENT_OUTPUT_TOKEN_LIMIT"):
         Settings()
 
-    monkeypatch.setenv("AGENT_COMPOSER_MAX_TOKENS", "1000")
-    assert Settings().agent_composer_max_tokens == 1000
+    monkeypatch.setenv("AGENT_COMPOSER_MAX_TOKENS", "2000")
+    assert Settings().agent_composer_max_tokens == 2000
 
 
 def test_context_compressed_diagnostic_contains_only_safe_counts(caplog):

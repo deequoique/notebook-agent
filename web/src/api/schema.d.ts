@@ -56,6 +56,142 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/browser-companion/devices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Devices */
+        get: operations["list_devices_api_v1_browser_companion_devices_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/browser-companion/devices/{device_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke Device */
+        delete: operations["revoke_device_api_v1_browser_companion_devices__device_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/browser-companion/extension/captures": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Submit Capture */
+        post: operations["submit_capture_api_v1_browser_companion_extension_captures_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/browser-companion/extension/grant": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Disconnect Extension */
+        delete: operations["disconnect_extension_api_v1_browser_companion_extension_grant_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/browser-companion/extension/pairings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Pairing */
+        post: operations["create_pairing_api_v1_browser_companion_extension_pairings_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/browser-companion/extension/pairings/{pairing_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Pairing Status */
+        get: operations["pairing_status_api_v1_browser_companion_extension_pairings__pairing_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/browser-companion/extension/pairings/{pairing_id}:exchange": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Exchange Pairing */
+        post: operations["exchange_pairing_api_v1_browser_companion_extension_pairings__pairing_id__exchange_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/browser-companion/pairings/{pairing_id}:approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve Pairing */
+        post: operations["approve_pairing_api_v1_browser_companion_pairings__pairing_id__approve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/capabilities": {
         parameters: {
             query?: never;
@@ -399,6 +535,74 @@ export interface components {
             /** Results */
             results: components["schemas"]["BatchItemResponse"][];
         };
+        /** BrowserCaptureRequest */
+        BrowserCaptureRequest: {
+            /** Canonical Url */
+            canonical_url: string;
+            caption: components["schemas"]["CaptureCaption"];
+            /** Client Version */
+            client_version: string;
+            /** Content Hash */
+            content_hash: string;
+            metadata: components["schemas"]["CaptureMetadata"];
+            /** Page Url */
+            page_url?: string | null;
+            /**
+             * Platform
+             * @enum {string}
+             */
+            platform: "youtube" | "ntu_kaltura";
+            /** Platform Id */
+            platform_id: string;
+            /**
+             * Protocol Version
+             * @constant
+             */
+            protocol_version: "capture.v1";
+        };
+        /** BrowserCaptureResponse */
+        BrowserCaptureResponse: {
+            /** Capture Id */
+            capture_id: string | null;
+            /** Item Public Id */
+            item_public_id: string;
+            /** Lifecycle */
+            lifecycle: string;
+            /** Platform */
+            platform: string;
+            /** Safe Error Code */
+            safe_error_code?: string | null;
+            /** Status */
+            status: string;
+        };
+        /** BrowserDeviceListResponse */
+        BrowserDeviceListResponse: {
+            /** Devices */
+            devices: components["schemas"]["BrowserDeviceResponse"][];
+        };
+        /** BrowserDeviceResponse */
+        BrowserDeviceResponse: {
+            /** Client Label */
+            client_label: string;
+            /** Client Version */
+            client_version: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Device Id */
+            device_id: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Last Used At */
+            last_used_at: string | null;
+            /** Revoked At */
+            revoked_at: string | null;
+        };
         /** CapabilitiesResponse */
         CapabilitiesResponse: {
             /**
@@ -406,6 +610,11 @@ export interface components {
              * @default true
              */
             archive: boolean;
+            /**
+             * Browser Companion
+             * @default true
+             */
+            browser_companion: boolean;
             /**
              * Chat
              * @default true
@@ -429,10 +638,12 @@ export interface components {
             /**
              * Supported Platforms
              * @default [
-             *       "youtube"
+             *       "youtube",
+             *       "bilibili",
+             *       "ntu_kaltura"
              *     ]
              */
-            supported_platforms: "youtube"[];
+            supported_platforms: ("youtube" | "bilibili" | "ntu_kaltura")[];
             /**
              * Transcript Pagination
              * @default true
@@ -446,6 +657,59 @@ export interface components {
              *     ]
              */
             web_login_channels: ("email" | "telegram" | "wechat")[];
+        };
+        /** CaptureCaption */
+        CaptureCaption: {
+            /** Cues */
+            cues?: components["schemas"]["CaptureCue"][];
+            /** Language */
+            language?: string | null;
+            /** Source */
+            source?: ("official_cc" | "auto_caption") | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "available" | "unavailable";
+        };
+        /** CaptureChapter */
+        CaptureChapter: {
+            /** End Sec */
+            end_sec?: number | null;
+            /** Start Sec */
+            start_sec: number;
+            /** Title */
+            title: string;
+        };
+        /** CaptureCue */
+        CaptureCue: {
+            /** End Sec */
+            end_sec: number;
+            /** Start Sec */
+            start_sec: number;
+            /** Text */
+            text: string;
+        };
+        /** CaptureMetadata */
+        CaptureMetadata: {
+            /** Author */
+            author?: string | null;
+            /** Chapters */
+            chapters?: components["schemas"]["CaptureChapter"][];
+            /** Cover Url */
+            cover_url?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Duration Sec */
+            duration_sec?: number | null;
+            /** Language */
+            language?: string | null;
+            /** Published At */
+            published_at?: string | null;
+            /** Tags */
+            tags?: string[];
+            /** Title */
+            title?: string | null;
         };
         /** ChallengeCreateRequest */
         ChallengeCreateRequest: {
@@ -660,6 +924,11 @@ export interface components {
             /** Message */
             message: string;
         };
+        /** HTTPValidationError */
+        HTTPValidationError: {
+            /** Detail */
+            detail?: components["schemas"]["ValidationError"][];
+        };
         /** HealthResponse */
         HealthResponse: {
             /**
@@ -758,6 +1027,74 @@ export interface components {
             /** Text */
             text: string;
         };
+        /** PairingApprovalResponse */
+        PairingApprovalResponse: {
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Pairing Id */
+            pairing_id: string;
+            /**
+             * Status
+             * @default approved
+             * @constant
+             */
+            status: "approved";
+        };
+        /** PairingCreateRequest */
+        PairingCreateRequest: {
+            /** Challenge */
+            challenge: string;
+            /** Client Label */
+            client_label: string;
+            /** Client Version */
+            client_version: string;
+        };
+        /** PairingCreateResponse */
+        PairingCreateResponse: {
+            /** Approval Url */
+            approval_url: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Pairing Id */
+            pairing_id: string;
+        };
+        /** PairingExchangeRequest */
+        PairingExchangeRequest: {
+            /** Verifier */
+            verifier: string;
+        };
+        /** PairingExchangeResponse */
+        PairingExchangeResponse: {
+            /** Access Token */
+            access_token: string;
+            /** Device Id */
+            device_id: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /**
+             * Token Type
+             * @default Bearer
+             * @constant
+             */
+            token_type: "Bearer";
+        };
+        /** PairingStatusResponse */
+        PairingStatusResponse: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "approved" | "expired" | "used";
+        };
         /** SessionResponse */
         SessionResponse: {
             /**
@@ -796,6 +1133,19 @@ export interface components {
             blocks: components["schemas"]["TranscriptBlockResponse"][];
             /** Next Cursor */
             next_cursor: string | null;
+        };
+        /** ValidationError */
+        ValidationError: {
+            /** Context */
+            ctx?: Record<string, never>;
+            /** Input */
+            input?: unknown;
+            /** Location */
+            loc: (string | number)[];
+            /** Message */
+            msg: string;
+            /** Error Type */
+            type: string;
         };
         /** WhySavedRequest */
         WhySavedRequest: {
@@ -945,13 +1295,13 @@ export interface operations {
                     "application/json": components["schemas"]["AuthErrorResponse"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Validation Error */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AuthErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
             /** @description Internal Server Error */
@@ -1021,6 +1371,238 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuthErrorResponse"];
+                };
+            };
+        };
+    };
+    list_devices_api_v1_browser_companion_devices_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserDeviceListResponse"];
+                };
+            };
+        };
+    };
+    revoke_device_api_v1_browser_companion_devices__device_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                device_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    submit_capture_api_v1_browser_companion_extension_captures_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BrowserCaptureRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserCaptureResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    disconnect_extension_api_v1_browser_companion_extension_grant_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    create_pairing_api_v1_browser_companion_extension_pairings_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PairingCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PairingCreateResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    pairing_status_api_v1_browser_companion_extension_pairings__pairing_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pairing_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PairingStatusResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    exchange_pairing_api_v1_browser_companion_extension_pairings__pairing_id__exchange_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pairing_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PairingExchangeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PairingExchangeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    approve_pairing_api_v1_browser_companion_pairings__pairing_id__approve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pairing_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PairingApprovalResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

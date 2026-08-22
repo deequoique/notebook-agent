@@ -19,6 +19,8 @@ import type {
   ConversationHistoryPage,
   ConversationResponse,
   ConversationTurns,
+  BrowserDeviceList,
+  PairingApproval,
 } from "./contracts";
 
 export class ApiError extends Error {
@@ -159,6 +161,26 @@ export function consumeLinkToken(token: string): Promise<LinkedResponse> {
     method: "POST",
     body: JSON.stringify(input),
   });
+}
+
+export function approveBrowserCompanionPairing(
+  pairingId: string,
+): Promise<PairingApproval> {
+  return requestJson(
+    `/api/v1/browser-companion/pairings/${encodeURIComponent(pairingId)}:approve`,
+    { method: "POST" },
+  );
+}
+
+export function listBrowserCompanionDevices(): Promise<BrowserDeviceList> {
+  return requestJson("/api/v1/browser-companion/devices");
+}
+
+export function revokeBrowserCompanionDevice(deviceId: string): Promise<void> {
+  return requestJson(
+    `/api/v1/browser-companion/devices/${encodeURIComponent(deviceId)}`,
+    { method: "DELETE" },
+  );
 }
 
 export function getCapabilities(): Promise<Capabilities> {

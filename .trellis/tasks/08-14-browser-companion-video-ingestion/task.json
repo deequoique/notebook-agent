@@ -1,0 +1,28 @@
+{
+  "id": "browser-companion-video-ingestion",
+  "name": "browser-companion-video-ingestion",
+  "title": "Browser companion video ingestion",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": "full-stack-browser-extension",
+  "package": null,
+  "priority": "P2",
+  "creator": "lane",
+  "assignee": "lane",
+  "createdAt": "2026-08-14",
+  "completedAt": null,
+  "branch": "codex/browser-companion-video-ingestion",
+  "base_branch": "dev",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "08-14-browser-companion-pairing-failure"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

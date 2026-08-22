@@ -30,10 +30,14 @@ const readyItem: LibraryItem = {
   latest_dispatch_public_id: null,
 };
 
-function renderPage(fetchItems: () => Promise<LibraryPageResponse>) {
+function renderPage(
+  fetchItems: () => Promise<LibraryPageResponse>,
+  capabilityOverrides: Partial<Capabilities> = {},
+) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const capabilities: Capabilities = {
     supported_platforms: ["youtube"],
+    browser_companion: true,
     web_login_channels: ["telegram"],
     save_enabled: true,
     max_save_batch_size: 10,
@@ -41,6 +45,7 @@ function renderPage(fetchItems: () => Promise<LibraryPageResponse>) {
     archive: true,
     summary_generation: false,
     chat: false,
+    ...capabilityOverrides,
   };
   return render(
     <QueryClientProvider client={client}>
@@ -78,6 +83,16 @@ describe("library page", () => {
       "off",
     );
     expect(screen.getByRole("button", { name: "搜索" })).toHaveTextContent("搜索");
+    expect(screen.queryByRole("link", { name: "AI 智能检索" })).not.toBeInTheDocument();
+  });
+
+  it("shows the AI search entry only when the server enables chat", async () => {
+    renderPage(
+      async () => ({ items: [readyItem], total: 1, page: 1, page_size: 20, is_true_first_empty: false }),
+      { chat: true },
+    );
+
+    expect(await screen.findByRole("link", { name: "AI 智能检索" })).toHaveAttribute("href", "/chat");
   });
 
   it("separates work items below readable videos and shows approximate progress", async () => {
@@ -143,7 +158,29 @@ describe("library page", () => {
     );
 
     expect(await screen.findByRole("button", { name: "暂时无法添加视频" })).toBeDisabled();
+    expect(screen.getByRole("note")).toHaveTextContent("当前部署暂未开放服务器端添加");
+    expect(screen.getByRole("link", { name: "查看浏览器插件" })).toHaveAttribute(
+      "href",
+      "/account/browser-companion",
+    );
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("balances exactly three readable videos as an editorial trio", async () => {
+    renderPage(async () => ({
+      items: [
+        { ...readyItem, public_id: "one" },
+        { ...readyItem, public_id: "two" },
+        { ...readyItem, public_id: "three" },
+      ],
+      total: 3,
+      page: 1,
+      page_size: 20,
+      is_true_first_empty: false,
+    }));
+
+    const readableRegion = await screen.findByRole("region", { name: "可阅读视频" });
+    expect(readableRegion.querySelector(".video-grid")).toHaveClass("video-grid--trio");
   });
 
   it("discovers collection tags and sends a dedicated exact collection filter", async () => {
@@ -176,7 +213,7 @@ describe("library page", () => {
     expect(within(filters).getByRole("button", { name: "AI_入门" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "添加视频" }));
-    const dialog = screen.getByRole("dialog", { name: "添加 YouTube 视频" });
+    const dialog = screen.getByRole("dialog", { name: "添加视频链接" });
     expect(within(dialog).getByRole("button", { name: "产品调研" })).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "AI_入门" })).toBeInTheDocument();
   });

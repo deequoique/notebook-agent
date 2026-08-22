@@ -91,13 +91,16 @@ def main() -> None:
         _mcp_grants(args)
         return
     settings = get_settings()
-    configure_runtime_logging(
+    logging_options = dict(
         log_dir=getattr(settings, "notebook_agent_log_dir", ".runtime/logs"),
         max_bytes=getattr(
             settings, "notebook_agent_log_max_bytes", 10 * 1024 * 1024
         ),
         backup_count=getattr(settings, "notebook_agent_log_backup_count", 5),
     )
+    if args.command == "mcp-server" and args.transport == "stdio":
+        logging_options["console_stream"] = "stderr"
+    configure_runtime_logging(**logging_options)
     if args.command == "mcp-server":
         from app.mcp_server import run_stdio, run_streamable_http
 

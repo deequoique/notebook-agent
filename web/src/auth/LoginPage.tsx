@@ -20,6 +20,7 @@ import type {
   SessionInfo,
 } from "../api/contracts";
 import { BrandLogo } from "../app/BrandLogo";
+import { BROWSER_COMPANION_DOWNLOAD_URL } from "../app/browserCompanion";
 import { useRouteNavigate } from "../app/RouteTransition";
 
 type ChannelAvailability = "checking" | "available" | "disabled" | "unavailable";
@@ -186,10 +187,19 @@ export function LoginPage({
     <main className="login-page">
       <div className="paper-glow" aria-hidden="true" />
       <section className="login-card" aria-labelledby="login-title">
-        <a className="wordmark" href="/" aria-label="Notebook Agent 首页">
-          <BrandLogo className="wordmark__sigil" />
-          <span>Notebook Agent</span>
-        </a>
+        <div className="login-card__topline">
+          <a className="wordmark" href="/" aria-label="Notebook Agent 首页">
+            <BrandLogo className="wordmark__sigil" />
+            <span>Notebook Agent</span>
+          </a>
+          <a
+            className="login-companion-link"
+            download
+            href={BROWSER_COMPANION_DOWNLOAD_URL}
+          >
+            获取浏览器插件
+          </a>
+        </div>
         <p className="eyebrow">你的私人视频资料库</p>
         <h1 id="login-title">登录你的视频资料库</h1>
         {accountLinkSuccess ? (

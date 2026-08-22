@@ -48,6 +48,9 @@
 ### Entry and Guidance
 
 - 已认证用户必须能从现有账户菜单进入“绑定 Telegram”界面；未认证用户不能访问。
+- 页面必须明确展示项目 Telegram Bot `@notebook_agent_bot`，并提供指向
+  `https://t.me/notebook_agent_bot` 的可点击外部链接，让用户能直接打开正确的私聊入口。
+- Bot 链接不得携带一次性绑定码或其他敏感参数；两个绑定方向都必须在操作说明附近提供该入口。
 - 页面必须说明绑定后 Web 与 Telegram 共用私人资料库，但聊天历史仍按渠道独立。
 - 页面必须说明绑定码短期有效、只能使用一次且不能转发给他人。
 
@@ -79,7 +82,7 @@
 - 微信/OpenClaw/iLink 扫码登录、微信绑定 UI 和微信端到端验收。
 - 新建独立 Telegram webhook server、绕过 LangBot bridge，或让 LangBot Local Agent 管理租户。
 - 账户拆分、解绑、手工选择保留账户、迁移渠道聊天历史或恢复已消费绑定码。
-- 持久化“已绑定渠道”列表、Telegram Bot 深链/二维码、OAuth、管理员代绑和跨用户搜索。
+- 持久化“已绑定渠道”列表、携带绑定码的 Telegram 深链、二维码、OAuth、管理员代绑和跨用户搜索。
 - 在浏览器暴露 Bot token、MCP grant、tenant ID、channel identity ID 或其他内部权限凭证。
 
 ## Acceptance Criteria
@@ -87,6 +90,8 @@
 - [ ] 用户创建的 Telegram Bot 能通过 LangBot required bridge 到达 `ChannelService`，并通过真实
   私聊 `/start` 或 `/whoami` smoke 证明 sender identity 与 bot UUID 映射可用。
 - [ ] 已登录邮箱用户可从账户菜单进入 Telegram 绑定界面；未登录访问被认证守卫拦截。
+- [ ] 两个绑定方向都能看见并打开 `@notebook_agent_bot`；链接目标固定为
+  `https://t.me/notebook_agent_bot`，且 URL 中不包含绑定码。
 - [ ] Web 可生成目标为 Telegram 的一次性绑定码，并展示正确、可复制的 `/link <code>` 指令、
   短期有效说明和安全提醒。
 - [ ] 用户在 Telegram Bot 中发送 Web 生成的 `/link <code>` 后，Telegram identity 与邮箱
