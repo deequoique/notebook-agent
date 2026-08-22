@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 from app.api.app import WebApiServices, create_app
+from app.api.conversation_routes import ConversationStreamEvent
 from app.api.auth_schemas import (
     ChallengeCreateRequest,
     ChallengeCreateResponse,
@@ -43,16 +44,18 @@ def rendered_schema() -> str:
     # path for embedders that still advertise Telegram/WeChat.  Keep its
     # generated request aliases available without mounting those routes in the
     # canonical browser document.
-    document["components"]["schemas"].update(
-        {
-            model.__name__: model.model_json_schema()
-            for model in (
-                ChallengeCreateRequest,
-                ChallengeCreateResponse,
-                ChallengeStatusResponse,
-            )
-        }
-    )
+    schemas = document["components"]["schemas"]
+    for model in (
+        ChallengeCreateRequest,
+        ChallengeCreateResponse,
+        ChallengeStatusResponse,
+        ConversationStreamEvent,
+    ):
+        schema = model.model_json_schema(
+            ref_template="#/components/schemas/{model}"
+        )
+        schemas.update(schema.pop("$defs", {}))
+        schemas[model.__name__] = schema
     return json.dumps(
         document,
         ensure_ascii=False,

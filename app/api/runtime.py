@@ -40,6 +40,10 @@ class _LazyChannelService:
     async def handle(self, envelope):
         return await self._get().handle(envelope)
 
+    async def handle_stream(self, envelope):
+        async for event in self._get().handle_stream(envelope):
+            yield event
+
 
 def build_web_app(
     settings: Settings | None = None,

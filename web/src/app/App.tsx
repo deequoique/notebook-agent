@@ -9,7 +9,7 @@ import {
   useLocation,
 } from "react-router";
 
-import { getSession, logout, setUnauthorizedHandler } from "../api/client";
+import { getSession, logout, setUnauthorizedHandler, streamConversationMessage } from "../api/client";
 import type { SessionInfo } from "../api/contracts";
 import { AccountLinkPage } from "../account/AccountLinkPage";
 import { BrowserCompanionPage } from "../account/BrowserCompanionPage";
@@ -174,7 +174,7 @@ function UnauthorizedBoundary({ rotateClient }: { rotateClient: () => void }) {
       <Route path="/login" element={<LoginRoute activateSession={rotateClient} />} />
       <Route element={<ProtectedLayout rotateClient={rotateClient} />}>
         <Route path="/library" element={<LibraryPage />} />
-        <Route path="/chat" element={<ChatPage />} />
+        <Route path="/chat" element={<ChatPage sendStream={streamConversationMessage} />} />
         <Route path="/videos/:id" element={<VideoDetailPage />} />
         <Route path="/account/link" element={<AccountLinkRoute rotateClient={rotateClient} />} />
         <Route path="/account/browser-companion" element={<BrowserCompanionPage />} />

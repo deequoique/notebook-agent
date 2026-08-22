@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import dataclass
+from collections.abc import AsyncIterator
 from typing import Any, Callable, Literal
 
 from pydantic_ai import UsageLimits
@@ -21,6 +22,8 @@ from app.agent.actions import ActionInputMismatch, AgentActionRuntime, AgentActi
 from app.agent.agent_builder import build_agent
 from app.agent.answer_pipeline import (
     AnswerPipeline,
+    ProviderStreamingUnavailable,
+    SectionStreamFactory,
     _canonical_history,
     build_composer,
 )
@@ -28,13 +31,10 @@ from app.agent.answer_validation import NaturalAnswerValidationError, validate_n
 from app.agent.autonomy import RecoveryLedger, RecoveryPolicy, TodoValidationError, TurnTodoStore
 from app.agent.context import TurnContext
 from app.agent.provider import composer_model_settings
-from app.agent.response import GroundedResponseSection, ResponseEnvelope
+from app.agent.response import ResponseEnvelope
 from app.agent.runtime_state import (
     AgentDeps,
     AgentExecution,
-    COMPRESSED_EVIDENCE_LIMIT,
-    MAX_SOURCE_ITEMS,
-    _citation_matches_scope,
 )
 from app.agent.services import (
     EmbeddingUnavailable,
@@ -42,6 +42,7 @@ from app.agent.services import (
     KnowledgeServices,
     RetrievalUnavailable,
 )
+from app.agent.streaming import AgentStreamEvent
 from app.agent.types import AgentAnswer, AgentRequest
 from app.config import Settings
 from app.diagnostics import RequestDiagnostics, classify_usage_limit
@@ -86,7 +87,7 @@ def _allow_blocked_todo_clarification(
         return False
     if deps.search_calls or deps.citations or deps.actions.read_action_results:
         return False
-    if deps.reference_scope or deps.context.recent_inventory:
+    if deps.reference_scope or deps.semantic_url_question or deps.context.recent_inventory:
         return False
     return _is_clarification_question(natural_text)
 
@@ -107,6 +108,8 @@ class KnowledgeAgent:
         action_factory: Callable[[AgentRequest], AgentActionServices] | None = None,
         *,
         composer_model: Model | str | None = None,
+        stream_model: Model | str | None = None,
+        section_stream_factory: SectionStreamFactory | None = None,
     ) -> None:
         self._agent = build_agent(
             model,
@@ -126,6 +129,9 @@ class KnowledgeAgent:
             self._composer,
             composer_model_settings=self._composer_model_settings,
             settings=settings,
+            stream_model=stream_model,
+            stream_plan_model=answer_model,
+            section_stream_factory=section_stream_factory,
         )
         self._settings = settings
         self._service_factory = service_factory
@@ -144,11 +150,12 @@ class KnowledgeAgent:
             environment=self._settings.notebook_agent_env,
         )
         parsed = parse_message_references(request.question)
-        reference_scope = (
-            parsed.references
-            if parsed.has_supported_urls and parsed.has_semantic_text
-            else ()
-        )
+        # A URL in a semantic question is model context, not a server-owned
+        # exact retrieval scope.  The primary Agent can decide whether to
+        # search the tenant library or narrow a search with ``item_id``; the
+        # service layer remains the hard tenant/visibility boundary.  Bare URL
+        # messages still take the deterministic save-confirmation route below.
+        reference_scope: tuple[tuple[str, str], ...] = ()
         actions = self._build_actions(request)
         diagnostics.event("agent_started", agent_phase="retrieval")
 
@@ -158,9 +165,12 @@ class KnowledgeAgent:
         services = self._service_factory(request)
         if isinstance(services, KnowledgeServices):
             services.set_diagnostics(diagnostics)
-        set_reference_scope = getattr(services, "set_reference_scope", None)
-        if callable(set_reference_scope):
-            set_reference_scope(reference_scope or None)
+        # Do not propagate parsed URL references as an exact search scope.
+        # ``KnowledgeServices`` defaults to unrestricted tenant-wide search;
+        # any optional item narrowing is supplied by the model and checked by
+        # its tenant-scoped service query.  If a trusted caller constructed a
+        # narrower service scope, preserve that server-owned constraint rather
+        # than widening it by resetting the service here.
         deps = self._build_deps(
             request,
             actions,
@@ -168,6 +178,7 @@ class KnowledgeAgent:
             diagnostics,
             reference_scope,
             parsed.semantic_remainder,
+            parsed.has_supported_urls and parsed.has_semantic_text,
         )
         primary = await self._run_primary_agent(request, deps, diagnostics)
         if isinstance(primary, AgentExecution):
@@ -178,6 +189,119 @@ class KnowledgeAgent:
             primary.value,
             diagnostics,
             reference_scope,
+        )
+
+    async def stream(
+        self,
+        request: AgentRequest,
+        *,
+        diagnostics: RequestDiagnostics | None = None,
+    ) -> AsyncIterator[AgentStreamEvent]:
+        """Run one turn and expose only validated section lifecycle events.
+
+        This mirrors the preparation and primary retrieval path of ``run``.
+        Persistence remains owned by ``ChannelService`` after the terminal
+        event, so a disconnected or aborted section cannot become history.
+        """
+
+        diagnostics = diagnostics or RequestDiagnostics.start(
+            request.request_id,
+            request.tenant.app_user_id,
+            allow_retrieval_content=self._settings.notebook_agent_log_retrieval_content,
+            environment=self._settings.notebook_agent_env,
+        )
+        parsed = parse_message_references(request.question)
+        reference_scope: tuple[tuple[str, str], ...] = ()
+        actions = self._build_actions(request)
+        diagnostics.event("agent_started", agent_phase="retrieval")
+
+        if parsed.is_url_only_batch:
+            execution = self._bare_url_action(
+                request, actions, parsed.ordered_urls, diagnostics
+            )
+            if execution.answer.text:
+                yield AgentStreamEvent(
+                    "text_delta",
+                    request.request_id,
+                    request.message_id,
+                    text=execution.answer.text,
+                )
+            yield AgentStreamEvent(
+                "completed", request.request_id, request.message_id,
+                answer=execution.answer, new_messages=tuple(execution.new_messages),
+            )
+            return
+
+        services = self._service_factory(request)
+        if isinstance(services, KnowledgeServices):
+            services.set_diagnostics(diagnostics)
+        deps = self._build_deps(
+            request,
+            actions,
+            services,
+            diagnostics,
+            reference_scope,
+            parsed.semantic_remainder,
+            parsed.has_supported_urls and parsed.has_semantic_text,
+        )
+        primary = await self._run_primary_agent(request, deps, diagnostics)
+        if isinstance(primary, AgentExecution):
+            execution = self._attach_read_observations(primary, deps)
+            if execution.answer.text:
+                yield AgentStreamEvent(
+                    "text_delta",
+                    request.request_id,
+                    request.message_id,
+                    text=execution.answer.text,
+                )
+            yield AgentStreamEvent(
+                "completed", request.request_id, request.message_id,
+                answer=execution.answer, new_messages=tuple(execution.new_messages),
+            )
+            return
+
+        # The same trusted gates used by the non-streaming path decide whether
+        # a section plan is applicable. Actions, read failures, canonical
+        # answers, and no-evidence outcomes stay on the compatibility path.
+        natural_text = getattr(primary.value, "output", None)
+        streamable = bool(deps.citations and isinstance(natural_text, str))
+        if streamable:
+            try:
+                deps.todo_store.finalize(
+                    allow_blocked=_allow_blocked_todo_clarification(deps, natural_text)
+                )
+            except TodoValidationError:
+                streamable = False
+        if streamable:
+            yield AgentStreamEvent(
+                "activity", request.request_id, request.message_id,
+                activity="planning_answer",
+            )
+            try:
+                async for event in self._answer_pipeline.stream_answer(
+                    request, deps, diagnostics
+                ):
+                    yield event
+                return
+            except ProviderStreamingUnavailable:
+                # No section/plan provider was explicitly configured. The
+                # caller may invoke the ordinary path exactly once; no plan
+                # request has been made in this branch.
+                pass
+
+        execution = await self._finalize_primary_result(
+            request, deps, primary.value, diagnostics, reference_scope
+        )
+        if execution.answer.text:
+            yield AgentStreamEvent(
+                "text_delta",
+                request.request_id,
+                request.message_id,
+                text=execution.answer.text,
+            )
+        yield AgentStreamEvent(
+            "completed", request.request_id, request.message_id,
+            answer=execution.answer, new_messages=tuple(execution.new_messages),
         )
 
     def _build_actions(self, request: AgentRequest) -> AgentActionRuntime:
@@ -209,12 +333,14 @@ class KnowledgeAgent:
         diagnostics: RequestDiagnostics,
         reference_scope: tuple[tuple[str, str], ...],
         semantic_text: str,
+        semantic_url_question: bool,
     ) -> AgentDeps:
         deps = AgentDeps(
             services,
             actions,
             diagnostics=diagnostics,
             reference_scope=reference_scope,
+            semantic_url_question=semantic_url_question,
             reference_save_requested=_explicit_save_requested(semantic_text),
             context=request.context,
             todo_store=TurnTodoStore(),
@@ -594,14 +720,6 @@ class KnowledgeAgent:
                 log_event=False,
             )
 
-        # A no-evidence tool call is a disposition, not model prose.  It is
-        # accepted only after a successful search and the read/action gates
-        # above have passed; candidate rows are intentionally discarded.
-        if deps.no_relevant_evidence_requested and deps.successful_searches:
-            return self._answer_pipeline.no_evidence(
-                request, diagnostics, deps.actions.read_action_results
-            )
-
         natural_text = getattr(agent_result, "output", None)
         if not isinstance(natural_text, str):
             diagnostics.event("agent_failed", error_code="answer_unavailable", agent_phase="answer")
@@ -685,22 +803,11 @@ class KnowledgeAgent:
                 request, diagnostics, deps.actions.read_action_results
             )
 
-        try:
-            validated = validate_natural_answer(
-                natural_text,
-                citations=deps.citations,
-                knowledge_search_succeeded=True,
-                explicit_reference_scope=reference_scope,
-                citation_matches_scope=_citation_matches_scope,
-                max_source_items=MAX_SOURCE_ITEMS,
-                max_segments=COMPRESSED_EVIDENCE_LIMIT,
-                required_item_ids=(
-                    frozenset(citation.item_id for citation in deps.citations.values())
-                    if reference_scope
-                    else frozenset()
-                ),
-            )
-        except NaturalAnswerValidationError:
+        # Once evidence exists, always use the structured Composer. A natural
+        # answer with one citation cannot safely express which sentence is
+        # unsupported; wrapping the whole text as one grounded section would
+        # falsely attribute unsupported claims to that citation.
+        if deps.citations:
             repaired = await self._answer_pipeline.recover_answer(
                 request, deps, diagnostics
             )
@@ -708,30 +815,14 @@ class KnowledgeAgent:
                 repaired.answer.action_results = list(deps.actions.read_action_results)
             return repaired
 
-        selected = [
-            deps.citations[segment_id]
-            for segment_id in validated.citation_ids
-            if segment_id in deps.citations
-        ]
-        model_text = re.sub(r"\[S[1-9][0-9]*\]", "", validated.text).strip()
-        diagnostics.event(
-            "citation_validated",
-            result_count=len(selected),
-            agent_phase="answer",
-        )
-        envelope = ResponseEnvelope.grounded(
-            sections=(
-                GroundedResponseSection(
-                    "grounded", model_text, tuple(validated.citation_ids)
-                ),
-            ),
-            citations=selected,
-            action_results=deps.actions.read_action_results,
-        )
-        answer_text = envelope.project(thread_id=request.thread_public_id).text
-        return AgentExecution(
-            envelope.project(thread_id=request.thread_public_id),
-            _canonical_history(request.question, answer_text),
+        # A reserved/skipped retrieval without a completed backend read is
+        # neither clean empty evidence nor a safe natural-answer path.
+        return self._failure(
+            request,
+            "暂时无法生成可靠回答，请稍后重试。",
+            "answer_unavailable",
+            diagnostics,
+            log_event=False,
         )
 
     @staticmethod

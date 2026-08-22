@@ -26,3 +26,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 2: Safe Markdown AI answers
+
+**Date**: 2026-08-21
+**Task**: Safe Markdown AI answers
+**Branch**: `main`
+
+### Summary
+
+Removed duplicate text citations from Web answers, added restrained shared Markdown guidance, safe Web Markdown rendering, scoped styles, citation-preserving tests, and updated Agent/frontend specs.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4d27ea7` | (see git log) |
+| `d422a6c` | (see git log) |
+
+### Status
+
+[OK] **Completed**

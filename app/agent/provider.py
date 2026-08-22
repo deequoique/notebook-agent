@@ -59,6 +59,24 @@ def composer_model_settings(model: Model | str, *, max_tokens: int) -> ModelSett
     return settings
 
 
+def model_supports_streaming(model: Model | str) -> bool:
+    """Return whether a concrete model overrides PydanticAI's stream seam.
+
+    A configured string model is intentionally treated as unknown: selecting
+    a provider by name does not prove that its implementation can produce
+    deltas.  PydanticAI's base ``Model.request_stream`` is a fail-closed
+    ``NotImplementedError`` implementation, so comparing the concrete class
+    method with the base method gives us a local capability check without
+    making a probe request (or consuming a user turn twice).
+    """
+
+    if isinstance(model, str):
+        return False
+    return getattr(type(model), "request_stream", None) is not getattr(
+        Model, "request_stream", None
+    )
+
+
 def build_model(settings: Settings) -> Model | str:
     """Build a direct provider or an OpenAI-compatible gateway model."""
 

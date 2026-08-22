@@ -92,6 +92,23 @@ def _search_then_text(model_text: str = "有证据 [S10]"):
     return FunctionModel(model)
 
 
+def _composer_for(segment_id: int = 10, text: str = "有证据") -> TestModel:
+    return TestModel(
+        custom_output_text=json.dumps(
+            {
+                "kind": "grounded",
+                "sections": [
+                    {
+                        "status": "grounded",
+                        "text": text,
+                        "citation_ids": [segment_id],
+                    }
+                ],
+            }
+        )
+    )
+
+
 @pytest.mark.asyncio
 async def test_transient_read_exact_retry_succeeds_once():
     citation = Citation(
@@ -103,7 +120,10 @@ async def test_transient_read_exact_retry_succeeds_once():
     )
     services = _FlakyReadServices(failures=1, result=[citation])
     result = await KnowledgeAgent(
-        _search_then_text(), _settings(), lambda _request: services
+        _search_then_text(),
+        _settings(),
+        lambda _request: services,
+        composer_model=_composer_for(),
     ).run(_request())
 
     assert result.answer.status == "ok"
@@ -135,7 +155,10 @@ async def test_transient_read_can_stop_without_retry_and_stays_distinct_from_emp
         )
 
     result = await KnowledgeAgent(
-        FunctionModel(model), _settings(), lambda _request: services
+        FunctionModel(model),
+        _settings(),
+        lambda _request: services,
+        composer_model=_composer_for(),
     ).run(_request())
 
     assert result.answer.status == "failed"
@@ -168,7 +191,10 @@ async def test_transient_read_exhaustion_never_makes_third_backend_call():
         return ModelResponse(parts=[TextPart("我来猜测一下")])
 
     result = await KnowledgeAgent(
-        FunctionModel(model), _settings(), lambda _request: services
+        FunctionModel(model),
+        _settings(),
+        lambda _request: services,
+        composer_model=_composer_for(),
     ).run(_request())
 
     assert len(services.calls) == 2
@@ -224,7 +250,10 @@ async def test_empty_search_same_query_does_not_spend_reformulation_then_changed
         )
 
     result = await KnowledgeAgent(
-        FunctionModel(model), _settings(), lambda _request: services
+        FunctionModel(model),
+        _settings(),
+        lambda _request: services,
+        composer_model=_composer_for(),
     ).run(_request())
 
     assert services.calls == [("原问题", None), ("改写问题", None)]

@@ -857,6 +857,7 @@
                 "type": "null"
               }
             ],
+            "default": null,
             "title": "Start Sec"
           },
           "title": {
@@ -966,6 +967,7 @@
                 "type": "null"
               }
             ],
+            "default": null,
             "title": "Error Code"
           },
           "status": {
@@ -985,6 +987,7 @@
                 "type": "null"
               }
             ],
+            "default": null,
             "title": "Thread Id"
           }
         },
@@ -993,6 +996,174 @@
           "text"
         ],
         "title": "ConversationResponse",
+        "type": "object"
+      },
+      "ConversationStreamEvent": {
+        "additionalProperties": false,
+        "description": "The small, public event envelope used by the browser SSE client.\n\nThe event type and activity values are intentionally closed sets.  Agent\nprovider chunks, tool arguments, diagnostics, and hidden reasoning never\ncross this boundary.",
+        "properties": {
+          "activity": {
+            "anyOf": [
+              {
+                "enum": [
+                  "preparing",
+                  "retrieving",
+                  "planning_answer",
+                  "composing",
+                  "completed",
+                  "failed",
+                  "cancelled"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activity"
+          },
+          "citation_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 8,
+            "title": "Citation Ids",
+            "type": "array"
+          },
+          "citations": {
+            "items": {
+              "$ref": "#/components/schemas/ConversationCitationResponse"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "message_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Message Id",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "provider_failure",
+                  "timeout",
+                  "cancelled"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "request_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Request Id",
+            "type": "string"
+          },
+          "response": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConversationResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "section_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section Id"
+          },
+          "sequence": {
+            "minimum": 1,
+            "title": "Sequence",
+            "type": "integer"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "grounded",
+                  "unsupported"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "type": {
+            "enum": [
+              "started",
+              "activity",
+              "section_started",
+              "text_delta",
+              "section_completed",
+              "section_aborted",
+              "completed",
+              "error",
+              "cancelled"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "request_id",
+          "message_id",
+          "sequence"
+        ],
+        "title": "ConversationStreamEvent",
         "type": "object"
       },
       "ConversationTurnResponse": {
@@ -2642,6 +2813,101 @@
           }
         ],
         "summary": "Send Message",
+        "tags": [
+          "conversation"
+        ]
+      }
+    },
+    "/api/v1/conversations/{conversation_id}/messages/stream": {
+      "post": {
+        "description": "Stream a browser-safe lifecycle while retaining JSON compatibility.\n\nThe channel service still owns identity resolution, idempotency,\npersistence, and answer projection.  This route only wraps that one\nexecution in a bounded, typed SSE envelope; it never starts a second\nAgent task or persistence path.",
+        "operationId": "send_message_stream_api_v1_conversations__conversation_id__messages_stream_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MessageInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {}
+            },
+            "description": "Server-sent public conversation events"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "406": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Acceptable"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "summary": "Send Message Stream",
         "tags": [
           "conversation"
         ]

@@ -53,6 +53,21 @@ Components are plain function components. Pages orchestrate queries and mutation
 - Focus indicators remain visible; keyboard and touch controls are at least 44px high where practical.
 - Thumbnails are decorative when the adjacent title already names the destination.
 
+## Safe Markdown Answers
+
+- AI answer Markdown is rendered by a feature-local presentation component,
+  not with `dangerouslySetInnerHTML`.
+- Keep raw HTML and optional Markdown extensions disabled. Override model-authored
+  links and images to inert text; only the separate server-owned citation DTO
+  may create clickable source anchors.
+- Remove the deterministic appended text-source block before Markdown parsing,
+  then render structured citation cards as adjacent semantic content.
+- Citation cards show the server-owned title, link, and timestamp by default;
+  subtitle/excerpt text remains inside a collapsed native `<details>` block and
+  is expanded only by the user's keyboard or pointer action.
+- Scope answer typography beneath `.chat-markdown`. Plain historical text must
+  remain readable without migration.
+
 ---
 
 ## Common Mistakes

@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/agent-retrieval-convergence.md","reason":"Preserve trusted answer/citation boundaries while adding provider streaming"}
+{"file":".trellis/spec/backend/web-browser-runtime.md","reason":"Integrate provider deltas into authenticated SSE without changing persistence ownership"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Provider failure, timeout, cancellation and no-partial-answer semantics"}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Provider stream lifecycle metrics without content leakage"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Typed incremental event handling and final-answer correction"}

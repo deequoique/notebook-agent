@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/agent-retrieval-convergence.md","reason":"复核 evidence-first prompt、简单交流例外和不新增服务器 enforcement"}
+{"file":".trellis/spec/backend/provider-tls-diagnostics.md","reason":"复核没有新增 search-required 状态或日志字段"}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"复核生产日志无用户问题、模型文本和检索内容"}
+{"file":".trellis/tasks/08-22-evidence-first-routing-agent-self-knowledge/research/current-routing-and-self-knowledge-gap.md","reason":"确认实现范围只含 prompt/guidance，不包含研究中的服务器兜底"}

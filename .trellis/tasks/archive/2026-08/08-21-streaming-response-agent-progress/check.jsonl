@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/web-browser-runtime.md","reason":"Review authentication, CSRF, route compatibility and persistence boundaries"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Review terminal error/cancel behavior and safe error codes"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Run frontend tests/build and review stream UI regression coverage"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Validate generated contracts and event parser typing"}

@@ -89,6 +89,7 @@ _SAFE_HTTP_CODES = frozenset(
         "capture_too_large",
         "capture_upload_failed",
         "queue_unavailable",
+        "streaming_disabled",
     }
 )
 
@@ -205,6 +206,7 @@ _SAFE_MESSAGES = {
     "capture_too_large": "字幕数据超过当前处理上限",
     "capture_upload_failed": "字幕上传失败，请稍后重试",
     "queue_unavailable": "保存任务暂时无法排队，请稍后重试",
+    "streaming_disabled": "流式回答当前未启用，请使用兼容模式重试",
 }
 
 

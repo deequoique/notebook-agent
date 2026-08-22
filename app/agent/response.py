@@ -56,6 +56,7 @@ _SOURCE_BLOCK_PATTERN = re.compile(
     r"(?im)^\s*(?:#{1,6}\s*)?(?:sources?|references?|来源|参考来源)\s*(?:[:：]|$)"
 )
 NO_EVIDENCE_TEXT = "知识库中未找到足够证据。"
+UNSUPPORTED_EVIDENCE_TEXT = "当前检索证据不足以确认该部分。"
 
 
 def _require_safe_grounded_text(text: str) -> str:
@@ -99,6 +100,23 @@ class GroundedResponseSection:
             for value in self.citation_ids
         ):
             raise ValueError("grounded section citation_ids must be positive integers")
+
+
+@dataclass(frozen=True, slots=True)
+class UnsupportedResponseSection:
+    """A server-owned statement that the available evidence cannot confirm."""
+
+    kind: Literal["unsupported"]
+
+    @property
+    def text(self) -> str:
+        """Return only the fixed server-owned unsupported notice."""
+
+        return UNSUPPORTED_EVIDENCE_TEXT
+
+    def __post_init__(self) -> None:
+        if self.kind != "unsupported":
+            raise ValueError("unsupported section kind mismatch")
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +165,7 @@ class FailedResponseSection:
 
 ResponseSection = (
     GroundedResponseSection
+    | UnsupportedResponseSection
     | CanonicalResponseSection
     | ActionResponseSection
     | FailedResponseSection
@@ -154,10 +173,14 @@ ResponseSection = (
 
 
 def _render_grounded_text(
-    sections: tuple[GroundedResponseSection, ...], citations: tuple[Citation, ...]
+    sections: tuple[GroundedResponseSection | UnsupportedResponseSection, ...],
+    citations: tuple[Citation, ...],
 ) -> str:
     visible_sections: list[str] = []
     for section in sections:
+        if isinstance(section, UnsupportedResponseSection):
+            visible_sections.append(section.text.strip())
+            continue
         markers = " ".join(f"[S{segment_id}]" for segment_id in section.citation_ids)
         visible_sections.append(f"{section.text} {markers}".strip())
     groups: dict[int, list[Citation]] = {}
@@ -188,7 +211,7 @@ class ResponseEnvelope:
     def __post_init__(self) -> None:
         if self.status not in _STATUSES or self.disposition not in _DISPOSITIONS:
             raise ValueError("invalid response status or disposition")
-        if any(not isinstance(section, (GroundedResponseSection, CanonicalResponseSection, ActionResponseSection, FailedResponseSection)) for section in self.sections):
+        if any(not isinstance(section, (GroundedResponseSection, UnsupportedResponseSection, CanonicalResponseSection, ActionResponseSection, FailedResponseSection)) for section in self.sections):
             raise ValueError("response contains an unknown section type")
         _require_results(self.action_results, label="response")
         if self.error_code is not None and self.error_code not in ERROR_CODES and not (
@@ -200,9 +223,22 @@ class ResponseEnvelope:
         if self.disposition == "grounded":
             if self.status != "ok" or not self.citations:
                 raise ValueError("grounded response must be successful and cited")
-            if not self.sections or any(not isinstance(section, GroundedResponseSection) for section in self.sections):
-                raise ValueError("grounded response requires grounded sections only")
-            grounded_ids = tuple(segment_id for section in self.sections for segment_id in section.citation_ids)
+            if not self.sections or any(
+                not isinstance(section, (GroundedResponseSection, UnsupportedResponseSection))
+                for section in self.sections
+            ):
+                raise ValueError("grounded response requires grounded or unsupported sections")
+            if not any(
+                isinstance(section, GroundedResponseSection) and section.citation_ids
+                for section in self.sections
+            ):
+                raise ValueError("grounded response requires at least one cited section")
+            grounded_ids = tuple(
+                segment_id
+                for section in self.sections
+                if isinstance(section, GroundedResponseSection)
+                for segment_id in section.citation_ids
+            )
             citation_ids = tuple(citation.segment_id for citation in self.citations)
             if grounded_ids != citation_ids:
                 raise ValueError("grounded citations must equal section citation union")
@@ -241,7 +277,8 @@ class ResponseEnvelope:
     def grounded(
         cls,
         *,
-        sections: list[GroundedResponseSection] | tuple[GroundedResponseSection, ...],
+        sections: list[GroundedResponseSection | UnsupportedResponseSection]
+        | tuple[GroundedResponseSection | UnsupportedResponseSection, ...],
         citations: list[Citation] | tuple[Citation, ...],
         action_results: list[dict] | tuple[dict, ...] = (),
     ) -> "ResponseEnvelope":
@@ -290,7 +327,14 @@ class ResponseEnvelope:
         """Project only the normalized sections to the stable public contract."""
 
         if self.disposition == "grounded":
-            text = _render_grounded_text(tuple(section for section in self.sections if isinstance(section, GroundedResponseSection)), self.citations)
+            text = _render_grounded_text(
+                tuple(
+                    section
+                    for section in self.sections
+                    if isinstance(section, (GroundedResponseSection, UnsupportedResponseSection))
+                ),
+                self.citations,
+            )
         else:
             text = "\n\n".join(section.text for section in self.sections if hasattr(section, "text"))
         return AgentAnswer(status=self.status, text=text, citations=list(self.citations), action_results=list(self.action_results), thread_id=thread_id, error_code=self.error_code)
@@ -299,6 +343,7 @@ class ResponseEnvelope:
 __all__ = [
     "ACTION_CODES", "CANONICAL_TEMPLATE_KEYS", "ActionResponseSection",
     "CanonicalResponseSection", "ERROR_CODES", "FailedResponseSection",
-    "GroundedResponseSection", "NO_EVIDENCE_TEXT", "ResponseDisposition",
+    "GroundedResponseSection", "NO_EVIDENCE_TEXT", "UNSUPPORTED_EVIDENCE_TEXT", "ResponseDisposition",
     "ResponseEnvelope", "ResponseSection",
+    "UnsupportedResponseSection",
 ]

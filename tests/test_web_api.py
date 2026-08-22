@@ -7,6 +7,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.agent.types import AgentAnswer
+from app.api.conversation_routes import _web_agent_transport_timeout
 from app.config import Settings
 from app.models import AppUser, ChannelIdentity, WebAuthChallenge, WebSession
 from app.web_api import SESSION_COOKIE_NAME, build_web_auth_service, create_web_app
@@ -80,6 +81,12 @@ async def test_web_api_sets_secure_cookie_rejects_origin_and_builds_trusted_enve
         assert response.status_code == 204
         assert SESSION_COOKIE_NAME in response.headers["set-cookie"]
         assert (await client.get("/api/v1/auth/session")).status_code == 401
+
+
+def test_web_message_transport_covers_retrieval_and_composition_budgets():
+    settings = Settings(agent_timeout_seconds=45)
+
+    assert _web_agent_transport_timeout(settings) == 100
 
 
 def _email_settings(**changes) -> Settings:

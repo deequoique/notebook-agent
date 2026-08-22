@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/agent-retrieval-convergence.md", "reason": "Shared Composer, bounded-answer, citation-validation, persistence, and fallback contracts."}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "Feature-local presentation component and colocated test ownership."}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Semantic HTML, accessibility, and scoped presentation conventions."}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend security restrictions and required verification commands."}

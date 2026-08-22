@@ -76,14 +76,14 @@ class ToolPolicy:
     def prepare_management(self, ctx: RunContext[AgentDeps], tool_def):
         """Hide inventory/item-management tools for explicit URL questions."""
 
-        if ctx.deps.reference_scope:
+        if ctx.deps.reference_scope or ctx.deps.semantic_url_question:
             return None
         return tool_def
 
     def prepare_pending_delete(self, ctx: RunContext[AgentDeps], tool_def):
         """Expose delete decision tools only for a trusted pending delete."""
 
-        if ctx.deps.reference_scope:
+        if ctx.deps.reference_scope or ctx.deps.semantic_url_question:
             return None
         snapshot = ctx.deps.actions.pending_delete_snapshot()
         if snapshot is None or not getattr(snapshot, "active", False):
@@ -100,33 +100,20 @@ class ToolPolicy:
 
         if not ctx.deps.actions.save_enabled:
             return None
-        if ctx.deps.reference_scope and not ctx.deps.reference_save_requested:
+        if ctx.deps.semantic_url_question and not ctx.deps.reference_save_requested:
             return None
         return tool_def
 
     def prepare_pending_save(self, ctx: RunContext[AgentDeps], tool_def):
         """Hide pending save decisions during explicit URL questions."""
 
-        if ctx.deps.reference_scope:
+        if ctx.deps.reference_scope or ctx.deps.semantic_url_question:
             return None
         if not ctx.deps.actions.save_enabled:
             return None
         if not ctx.deps.actions.pending_save_snapshot().active:
             return None
         return tool_def
-
-    def prepare_no_relevant_evidence(self, ctx: RunContext[AgentDeps], tool_def):
-        """Expose the no-evidence disposition only after a clean search."""
-
-        deps = ctx.deps
-        if (
-            deps.successful_searches > 0
-            and not deps.pending_read_failures
-            and not deps.read_recovery_exhausted
-            and deps.actions.outcome is None
-        ):
-            return tool_def
-        return None
 
     def execute_tool(self, deps: AgentDeps, name: str, operation):
         """Record only the tool boundary, never its arguments or output."""

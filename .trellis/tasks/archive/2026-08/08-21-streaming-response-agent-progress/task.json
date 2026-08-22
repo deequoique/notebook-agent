@@ -1,0 +1,28 @@
+{
+  "id": "streaming-response-agent-progress",
+  "name": "streaming-response-agent-progress",
+  "title": "流式响应与 Agent 进度可见性",
+  "description": "将 Agent 输出改为流式响应，并向用户展示受控的当前活动/进度状态，同时保留错误、取消、断线和非流式降级能力。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "lane",
+  "assignee": "lane",
+  "createdAt": "2026-08-21",
+  "completedAt": "2026-08-21",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "08-21-agent-provider-token-streaming"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

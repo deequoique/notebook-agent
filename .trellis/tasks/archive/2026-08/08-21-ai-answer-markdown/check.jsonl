@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/agent-retrieval-convergence.md", "reason": "Verify citations, fallbacks, and shared-channel answer contracts remain intact."}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Review semantic output, accessibility, and responsive presentation."}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Run and assess required frontend security and quality gates."}

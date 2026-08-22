@@ -243,6 +243,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/conversations/{conversation_id}/messages/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send Message Stream
+         * @description Stream a browser-safe lifecycle while retaining JSON compatibility.
+         *
+         *     The channel service still owns identity resolution, idempotency,
+         *     persistence, and answer projection.  This route only wraps that one
+         *     execution in a bounded, typed SSE envelope; it never starts a second
+         *     Agent task or persistence path.
+         */
+        post: operations["send_message_stream_api_v1_conversations__conversation_id__messages_stream_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/conversations/{conversation_id}/reset": {
         parameters: {
             query?: never;
@@ -783,8 +808,11 @@ export interface components {
         ConversationCitationResponse: {
             /** Excerpt */
             excerpt: string;
-            /** Start Sec */
-            start_sec?: number | null;
+            /**
+             * Start Sec
+             * @default null
+             */
+            start_sec: number | null;
             /** Title */
             title: string;
             /** Url */
@@ -830,14 +858,60 @@ export interface components {
             }[];
             /** Citations */
             citations?: components["schemas"]["ConversationCitationResponse"][];
-            /** Error Code */
-            error_code?: string | null;
+            /**
+             * Error Code
+             * @default null
+             */
+            error_code: string | null;
             /** Status */
             status: string;
             /** Text */
             text: string;
-            /** Thread Id */
-            thread_id?: string | null;
+            /**
+             * Thread Id
+             * @default null
+             */
+            thread_id: string | null;
+        };
+        /**
+         * ConversationStreamEvent
+         * @description The small, public event envelope used by the browser SSE client.
+         *
+         *     The event type and activity values are intentionally closed sets.  Agent
+         *     provider chunks, tool arguments, diagnostics, and hidden reasoning never
+         *     cross this boundary.
+         */
+        ConversationStreamEvent: {
+            /** Activity */
+            activity?: ("preparing" | "retrieving" | "planning_answer" | "composing" | "completed" | "failed" | "cancelled") | null;
+            /** Citation Ids */
+            citation_ids?: number[];
+            /** Citations */
+            citations?: components["schemas"]["ConversationCitationResponse"][];
+            /** Error Code */
+            error_code?: string | null;
+            /** Message */
+            message?: string | null;
+            /** Message Id */
+            message_id: string;
+            /** Reason */
+            reason?: ("provider_failure" | "timeout" | "cancelled") | null;
+            /** Request Id */
+            request_id: string;
+            response?: components["schemas"]["ConversationResponse"] | null;
+            /** Section Id */
+            section_id?: string | null;
+            /** Sequence */
+            sequence: number;
+            /** Status */
+            status?: ("grounded" | "unsupported") | null;
+            /** Text */
+            text?: string | null;
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "started" | "activity" | "section_started" | "text_delta" | "section_completed" | "section_aborted" | "completed" | "error" | "cancelled";
         };
         /**
          * ConversationTurnResponse
@@ -1750,6 +1824,70 @@ export interface operations {
             };
             /** @description Gateway Timeout */
             504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    send_message_stream_api_v1_conversations__conversation_id__messages_stream_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": string;
+            };
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MessageInput"];
+            };
+        };
+        responses: {
+            /** @description Server-sent public conversation events */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": unknown;
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Acceptable */
+            406: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

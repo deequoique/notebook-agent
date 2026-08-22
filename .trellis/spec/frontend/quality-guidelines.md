@@ -54,7 +54,10 @@ pnpm check:api
 Tests must cover lifecycle copy and polling, true-first-empty behavior, partial
 batch outcomes, email challenge/verification, recoverable invalid codes,
 duplicate-submit protection, cache rotation, detail chapters/transcript, and
-server-derived actions. Use a real browser for native dialog behavior, mobile
+server-derived actions. Conversation streaming tests must cover the ephemeral
+section lifecycle, one-delta fallback before any public section, abort cleanup,
+final response correction, and collapsed Citation excerpts. Use a real browser
+for native dialog behavior, mobile
 overflow, SPA refresh, security headers, and page-error/console cleanliness.
 When native View Transitions are used, consume only the expected skipped
 transition `AbortError`; do not leave its readiness promise unhandled or swallow

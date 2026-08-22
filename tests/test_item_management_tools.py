@@ -9,6 +9,7 @@ only a test harness; it is not used by the application.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -50,7 +51,8 @@ from app.agent.management import (
 from app.agent.runtime import build_agent
 from app.agent.runtime import KnowledgeAgent
 from app.agent.services import KnowledgeNotFound, KnowledgeServices
-from app.agent.types import AgentRequest
+from app.agent.streaming import AgentStreamEvent
+from app.agent.types import AgentRequest, Citation
 from app.channels.pending_actions import PendingConfirmationService
 from app.channels.conversations import reset_thread
 from app.channels.service import ChannelService
@@ -64,6 +66,7 @@ from app.models import (
     AppUser,
     ChannelIdentity,
     ContentItem,
+    ConversationTurn,
     ConversationThread,
     IngestDispatch,
     PendingChannelAction,
@@ -894,6 +897,149 @@ async def test_channel_service_delete_anchor_advances_through_clarification(sqli
         assert action is not None and action.consumed_at is not None
         assert action.payload["confirmation_anchor_message_id"] == "C"
         assert action.payload["confirmation_anchor_parent_message_id"] == "B"
+
+
+@pytest.mark.asyncio
+async def test_stream_bare_url_persists_confirmation_once_and_replays(sqlite_factory):
+    tenant = _tenant(user_id=17, identity_id=19)
+    thread_id = _seed_thread(sqlite_factory, tenant=tenant)
+    action_services = AgentActionServices(
+        IngestSubmissionService(sqlite_factory, lambda _dispatch_id: "task"),
+        PendingConfirmationService(sqlite_factory),
+    )
+
+    def unexpected_model(*_args):
+        raise AssertionError("bare URL must not call the model")
+
+    settings = replace(Settings(), agent_timeout_seconds=2, agent_streaming_enabled=True)
+    agent = KnowledgeAgent(
+        FunctionModel(unexpected_model),
+        settings,
+        lambda _request: object(),
+        action_factory=lambda _request: action_services,
+    )
+    service = ChannelService(sqlite_factory, agent, settings)
+    envelope = ChannelEnvelope(
+        channel=tenant.channel,
+        account_id=tenant.account_id,
+        external_user_id=tenant.external_user_id,
+        conversation_id=f"chat-{tenant.app_user_id}",
+        message_id="stream-bare-message",
+        text="https://youtu.be/9bZkp7q19f0",
+    )
+
+    first_events = [event async for event in service.handle_stream(envelope)]
+    replay_events = [event async for event in service.handle_stream(envelope)]
+    first_answer = next(event.answer for event in first_events if event.type == "completed")
+    replay_answer = next(event.answer for event in replay_events if event.type == "completed")
+
+    assert [event.type for event in first_events] == ["text_delta", "completed"]
+    assert [event.type for event in replay_events] == ["completed"]
+    assert first_answer is not None
+    assert replay_answer is not None
+    assert first_answer.model_dump() == replay_answer.model_dump()
+    assert first_answer.status == "ok"
+    assert first_answer.error_code == "save_confirmation_required"
+    assert len(first_answer.action_results) == 1
+
+    with sqlite_factory() as db:
+        turns = list(
+            db.scalars(
+                select(ConversationTurn).where(
+                    ConversationTurn.thread_id == thread_id,
+                )
+            )
+        )
+        pending = list(
+            db.scalars(
+                select(PendingChannelAction).where(
+                    PendingChannelAction.thread_id == thread_id,
+                )
+            )
+        )
+
+    assert len(turns) == 1
+    assert turns[0].message_id == envelope.message_id
+    assert turns[0].assistant_text == first_answer.text
+    assert len(pending) == 1
+    assert pending[0].kind == "save_videos"
+    assert first_answer.action_results[0]["action_id"] == pending[0].id
+
+
+@pytest.mark.asyncio
+async def test_stream_disconnect_after_section_abort_does_not_persist_partial_turn(
+    sqlite_factory,
+):
+    tenant = _tenant(user_id=18, identity_id=20)
+    thread_id = _seed_thread(sqlite_factory, tenant=tenant)
+    citation = Citation(
+        item_id=7,
+        segment_id=11,
+        title="来源视频",
+        excerpt="字幕依据",
+        url="https://example.test/video?t=11",
+        start_sec=11,
+    )
+
+    class DisconnectingAgent:
+        async def stream(self, request, *, diagnostics=None):
+            yield AgentStreamEvent(
+                "section_started",
+                request.request_id,
+                request.message_id,
+                section_id="section-1",
+                status="grounded",
+                citation_ids=(citation.segment_id,),
+                citations=(citation,),
+            )
+            yield AgentStreamEvent(
+                "text_delta",
+                request.request_id,
+                request.message_id,
+                section_id="section-1",
+                text="尚未完成的部分",
+            )
+            yield AgentStreamEvent(
+                "section_aborted",
+                request.request_id,
+                request.message_id,
+                section_id="section-1",
+                reason="cancelled",
+            )
+            raise asyncio.CancelledError
+
+    service = ChannelService(
+        sqlite_factory,
+        DisconnectingAgent(),
+        replace(Settings(), agent_timeout_seconds=2),
+    )
+    envelope = ChannelEnvelope(
+        channel=tenant.channel,
+        account_id=tenant.account_id,
+        external_user_id=tenant.external_user_id,
+        conversation_id=f"chat-{tenant.app_user_id}",
+        message_id="stream-aborted-message",
+        text="问题",
+    )
+    events = []
+    with pytest.raises(asyncio.CancelledError):
+        async for event in service.handle_stream(envelope):
+            events.append(event)
+
+    assert [event.type for event in events] == [
+        "section_started",
+        "text_delta",
+        "section_aborted",
+    ]
+    with sqlite_factory() as db:
+        turns = list(
+            db.scalars(
+                select(ConversationTurn).where(
+                    ConversationTurn.thread_id == thread_id,
+                )
+            )
+        )
+    assert turns == []
 
 
 @pytest.mark.asyncio

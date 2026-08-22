@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/agent-retrieval-convergence.md","reason":"Review that streamed prose cannot bypass final trusted Composer validation"}
+{"file":".trellis/spec/backend/web-browser-runtime.md","reason":"Review SSE cancellation, idempotency and single persistence path"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Verify multi-delta, duplicate, disconnect and fallback UI tests"}

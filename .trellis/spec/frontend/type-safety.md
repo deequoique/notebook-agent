@@ -21,6 +21,13 @@ TypeScript runs in strict mode. FastAPI Pydantic response and request models are
 
 Never duplicate lifecycle, login-channel, batch-status, or transcript response unions by hand.
 
+Conversation SSE events use the generated `ConversationStreamEvent` contract.
+The server omits event-specific null fields (`exclude_none`), so nullable
+fields such as `section_id`, `status`, and `reason` are optional in generated
+TypeScript as well as nullable. Use runtime lifecycle narrowing for their
+event-specific requirements; do not make fixtures satisfy a broader global
+required shape or bypass the contract with a cast.
+
 The exporter must instantiate the same email-enabled canonical route
 composition used in production, with inert injected services where external
 providers would otherwise be constructed. A schema generated from a legacy or

@@ -1,11 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  ConversationStreamError,
   consumeLinkToken,
   createTelegramLinkToken,
   requestJson,
   setUnauthorizedHandler,
+  streamConversationMessage,
+  StreamingUnavailableError,
 } from "./client";
+
+function streamRecord(event: Record<string, unknown>): string {
+  return `event: ${String(event.type)}\ndata: ${JSON.stringify(event)}\n\n`;
+}
 
 describe("same-origin API client", () => {
   it("copies the readable CSRF cookie to unsafe requests", async () => {
@@ -92,5 +99,216 @@ describe("same-origin API client", () => {
     expect(JSON.parse(String(init.body))).toEqual({ token: "one-time-token" });
     expect(new Headers(init.headers).get("X-CSRF-Token")).toBe("csrf-consume");
     expect(init.credentials).toBe("same-origin");
+  });
+
+  it("consumes ordered SSE events, copies CSRF, and returns the final projection", async () => {
+    document.cookie = "__Host-kb_csrf=csrf-stream; Path=/; Secure";
+    const response = {
+      status: "ok",
+      text: "最终答案",
+      citations: [],
+      action_results: [],
+      thread_id: "thread-1",
+      error_code: null,
+    };
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response([
+        streamRecord({ type: "started", request_id: "request-1", message_id: "message-1", sequence: 1, activity: "preparing" }),
+        streamRecord({ type: "activity", request_id: "request-1", message_id: "message-1", sequence: 2, activity: "retrieving" }),
+        streamRecord({ type: "text_delta", request_id: "request-1", message_id: "message-1", sequence: 3, text: "最终答案" }),
+        streamRecord({ type: "completed", request_id: "request-1", message_id: "message-1", sequence: 4, activity: "completed", response }),
+      ].join(""), { status: 200, headers: { "Content-Type": "text/event-stream" } }),
+    );
+    const events: string[] = [];
+
+    await expect(streamConversationMessage(
+      "conversation-1",
+      { message_id: "message-1", text: "问题" },
+      (event) => events.push(event.type),
+    )).resolves.toEqual(response);
+    expect(events).toEqual(["started", "activity", "text_delta", "completed"]);
+    const [path, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(path).toBe("/api/v1/conversations/conversation-1/messages/stream");
+    expect(new Headers(init.headers).get("Accept")).toBe("text/event-stream");
+    expect(new Headers(init.headers).get("X-CSRF-Token")).toBe("csrf-stream");
+    expect(init.credentials).toBe("same-origin");
+  });
+
+  it("parses citation-first section lifecycle events and preserves section metadata", async () => {
+    const final = {
+      status: "ok",
+      text: "第一段第二段",
+      citations: [{ title: "来源视频", excerpt: "字幕依据", url: "https://example.test/video", start_sec: 11 }],
+      action_results: [],
+      thread_id: "thread-1",
+      error_code: null,
+    };
+    const seen: Array<{ type: string; section_id?: string | null }> = [];
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response([
+        streamRecord({ type: "started", request_id: "request-section", message_id: "message-section", sequence: 1, activity: "preparing" }),
+        streamRecord({ type: "section_started", request_id: "request-section", message_id: "message-section", sequence: 2, section_id: "section-1", status: "grounded", citation_ids: [11], citations: final.citations }),
+        streamRecord({ type: "text_delta", request_id: "request-section", message_id: "message-section", sequence: 3, section_id: "section-1", text: "第一段" }),
+        streamRecord({ type: "text_delta", request_id: "request-section", message_id: "message-section", sequence: 4, section_id: "section-1", text: "第二段" }),
+        streamRecord({ type: "section_completed", request_id: "request-section", message_id: "message-section", sequence: 5, section_id: "section-1", status: "grounded" }),
+        streamRecord({ type: "completed", request_id: "request-section", message_id: "message-section", sequence: 6, response: final }),
+      ].join(""), { status: 200, headers: { "Content-Type": "text/event-stream" } }),
+    );
+    await expect(streamConversationMessage(
+      "conversation-1",
+      { message_id: "message-section", text: "问题" },
+      (event) => seen.push({ type: event.type, section_id: event.section_id }),
+    )).resolves.toEqual(final);
+    expect(seen).toEqual([
+      { type: "started", section_id: undefined },
+      { type: "section_started", section_id: "section-1" },
+      { type: "text_delta", section_id: "section-1" },
+      { type: "text_delta", section_id: "section-1" },
+      { type: "section_completed", section_id: "section-1" },
+      { type: "completed", section_id: undefined },
+    ]);
+  });
+
+  it("rejects section deltas that escape their validated lifecycle", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response([
+        streamRecord({ type: "started", request_id: "request-invalid-section", message_id: "message-invalid-section", sequence: 1, activity: "preparing" }),
+        streamRecord({ type: "section_started", request_id: "request-invalid-section", message_id: "message-invalid-section", sequence: 2, section_id: "section-1", status: "grounded", citation_ids: [11], citations: [{ title: "来源视频", excerpt: "字幕依据", url: "https://example.test/video", start_sec: 11 }] }),
+        streamRecord({ type: "text_delta", request_id: "request-invalid-section", message_id: "message-invalid-section", sequence: 3, section_id: "section-2", text: "越界文本" }),
+      ].join(""), { status: 200, headers: { "Content-Type": "text/event-stream" } }),
+    );
+
+    await expect(
+      streamConversationMessage(
+        "conversation-1",
+        { message_id: "message-invalid-section", text: "问题" },
+      ),
+    ).rejects.toEqual(expect.objectContaining({ code: "stream_protocol_error" }));
+  });
+
+  it("ignores duplicate sequence numbers but rejects a future sequence", async () => {
+    const final = {
+      status: "ok",
+      text: "答案",
+      citations: [],
+      action_results: [],
+      thread_id: "thread-1",
+      error_code: null,
+    };
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response([
+        streamRecord({ type: "started", request_id: "request-2", message_id: "message-2", sequence: 1, activity: "preparing" }),
+        streamRecord({ type: "activity", request_id: "request-2", message_id: "message-2", sequence: 1, activity: "retrieving" }),
+        streamRecord({ type: "completed", request_id: "request-2", message_id: "message-2", sequence: 2, response: final }),
+      ].join(""), { status: 200, headers: { "Content-Type": "text/event-stream" } }),
+    );
+    await expect(streamConversationMessage("conversation-1", { message_id: "message-2", text: "问题" })).resolves.toEqual(final);
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response([
+        streamRecord({ type: "started", request_id: "request-3", message_id: "message-3", sequence: 1, activity: "preparing" }),
+        streamRecord({ type: "completed", request_id: "request-3", message_id: "message-3", sequence: 3, response: final }),
+      ].join(""), { status: 200, headers: { "Content-Type": "text/event-stream" } }),
+    );
+    await expect(streamConversationMessage("conversation-1", { message_id: "message-3", text: "问题" })).rejects.toBeInstanceOf(ConversationStreamError);
+  });
+
+  it("stops consuming records after a terminal completion in the same chunk", async () => {
+    const final = {
+      status: "ok",
+      text: "答案",
+      citations: [],
+      action_results: [],
+      thread_id: "thread-1",
+      error_code: null,
+    };
+    const events: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response([
+        streamRecord({ type: "started", request_id: "request-terminal", message_id: "message-terminal", sequence: 1, activity: "preparing" }),
+        streamRecord({ type: "completed", request_id: "request-terminal", message_id: "message-terminal", sequence: 2, response: final }),
+        // A buffered tail must not turn the already-complete response into a
+        // gap/ordering error or reach the UI as a second answer.
+        streamRecord({ type: "activity", request_id: "request-terminal", message_id: "message-terminal", sequence: 3, activity: "retrieving" }),
+      ].join(""), { status: 200, headers: { "Content-Type": "text/event-stream" } }),
+    );
+
+    await expect(streamConversationMessage(
+      "conversation-1",
+      { message_id: "message-terminal", text: "问题" },
+      (event) => events.push(event.type),
+    )).resolves.toEqual(final);
+    expect(events).toEqual(["started", "completed"]);
+  });
+
+  it("rejects events for a different message id", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        streamRecord({
+          type: "started",
+          request_id: "request-mismatch",
+          message_id: "another-message",
+          sequence: 1,
+          activity: "preparing",
+        }),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } },
+      ),
+    );
+    await expect(
+      streamConversationMessage("conversation-1", { message_id: "message-expected", text: "问题" }),
+    ).rejects.toMatchObject({ code: "stream_protocol_error" });
+  });
+
+  it("requires the stream to start with sequence one", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        streamRecord({
+          type: "activity",
+          request_id: "request-no-start",
+          message_id: "message-no-start",
+          sequence: 1,
+          activity: "retrieving",
+        }),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } },
+      ),
+    );
+    await expect(
+      streamConversationMessage("conversation-1", { message_id: "message-no-start", text: "问题" }),
+    ).rejects.toMatchObject({ code: "stream_protocol_error" });
+  });
+
+  it("rejects a text delta without text instead of passing it to the UI", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        streamRecord({
+          type: "started",
+          request_id: "request-invalid-delta",
+          message_id: "message-invalid-delta",
+          sequence: 1,
+          activity: "preparing",
+        })
+        + streamRecord({
+          type: "text_delta",
+          request_id: "request-invalid-delta",
+          message_id: "message-invalid-delta",
+          sequence: 2,
+          text: null,
+        }),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } },
+      ),
+    );
+    await expect(
+      streamConversationMessage("conversation-1", { message_id: "message-invalid-delta", text: "问题" }),
+    ).rejects.toMatchObject({ code: "stream_protocol_error" });
+  });
+
+  it("surfaces explicit stream disablement for a one-time JSON fallback", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ code: "streaming_disabled", message: "流式回答当前未启用" }), {
+        status: 406,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    await expect(streamConversationMessage("conversation-1", { message_id: "message-4", text: "问题" })).rejects.toBeInstanceOf(StreamingUnavailableError);
   });
 });

@@ -1,21 +1,28 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 
 import {
   getCapabilities,
+  ConversationStreamError,
   getConversationTurns,
   listConversations,
   deleteConversation,
   resetConversation,
   sendConversationMessage,
+  StreamingUnavailableError,
 } from "../api/client";
 import type {
   Capabilities,
+  ConversationCitation,
   ConversationHistoryPage,
   ConversationResponse,
+  ConversationStreamEvent,
   ConversationTurns,
 } from "../api/contracts";
+import { ApiError } from "../api/client";
 import { RouteLink } from "../app/RouteTransition";
+import { MarkdownAnswer } from "./MarkdownAnswer";
 
 interface ChatPageProps {
   loadCapabilities?: () => Promise<Capabilities>;
@@ -23,13 +30,33 @@ interface ChatPageProps {
   fetchTurns?: (threadId: string) => Promise<ConversationTurns>;
   reset?: (conversationId: string) => Promise<ConversationResponse>;
   send?: (conversationId: string, input: { message_id: string; text: string }) => Promise<ConversationResponse>;
+  sendStream?: (
+    conversationId: string,
+    input: { message_id: string; text: string },
+    onEvent: (event: ConversationStreamEvent) => void,
+  ) => Promise<ConversationResponse>;
   deleteThread?: (threadId: string) => Promise<void>;
   createId?: () => string;
+}
+
+function sendErrorMessage(error: Error | null): string {
+  if (error instanceof ApiError && error.status === 504) {
+    return "回答生成超时，请重新发送。";
+  }
+  return "请求未能完成。请检查网络后重新发送。";
 }
 
 interface NewConversationResult {
   conversationId: string;
   response: ConversationResponse;
+}
+
+interface PendingSection {
+  sectionId: string;
+  status: "grounded" | "unsupported";
+  text: string;
+  citations: ConversationCitation[];
+  phase: "streaming" | "completed";
 }
 
 function displayTime(value: string): string {
@@ -46,11 +73,66 @@ function startTime(value: number | null | undefined): string | null {
   return `${minutes}:${seconds}`;
 }
 
+function assistantTextWithoutSourceList(text: string, hasCitations: boolean): string {
+  if (!hasCitations) return text;
+  const sourceListStart = text.lastIndexOf("\n\n来源：\n");
+  return sourceListStart === -1 ? text : text.slice(0, sourceListStart).trimEnd();
+}
+
+function markdownPreviewText(text: string): string {
+  return text
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/^\s{0,3}(?:#{1,6}\s+|>\s?|[-+*]\s+|\d+[.)]\s+)/gm, "")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/~~([^~]+)~~/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\s*\[S\d+\]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 const fallbackQuestions = [
   "这个观点在哪个视频的什么位置？",
   "这些视频对这个问题有哪些直接依据？",
   "请列出相关片段和可跳转的时间点。",
 ];
+
+const ACTIVITY_COPY: Record<string, string> = {
+  preparing: "正在准备回答…",
+  retrieving: "正在检索资料库…",
+  planning_answer: "正在规划回答依据…",
+  composing: "正在整理答案…",
+  completed: "回答已完成",
+  failed: "这次检索未能完成",
+  cancelled: "请求已取消",
+};
+
+function activityCopy(event: ConversationStreamEvent): string {
+  return event.activity ? (ACTIVITY_COPY[event.activity] ?? "正在处理…") : "正在处理…";
+}
+
+function CitationList({ citations }: { citations: ConversationCitation[] }) {
+  if (!citations.length) return null;
+  return (
+    <ol className="chat-citations">
+      {citations.map((citation, citationIndex) => (
+        <li key={`${citation.url}:${citation.start_sec ?? ""}:${citationIndex}`}>
+          <a href={citation.url} target="_blank" rel="noreferrer">
+            <span className="chat-citation-index">{String(citationIndex + 1).padStart(2, "0")}</span>
+            <span className="chat-citation-copy"><strong>{citation.title}</strong></span>
+            {startTime(citation.start_sec) ? <span className="chat-citation-time">{startTime(citation.start_sec)} ↗</span> : <span className="chat-citation-time">打开 ↗</span>}
+          </a>
+          <details className="chat-citation-excerpt">
+            <summary>展开字幕依据</summary>
+            <p>{citation.excerpt}</p>
+          </details>
+        </li>
+      ))}
+    </ol>
+  );
+}
 
 export function ChatPage({
   loadCapabilities = getCapabilities,
@@ -58,6 +140,7 @@ export function ChatPage({
   fetchTurns = getConversationTurns,
   reset = resetConversation,
   send = sendConversationMessage,
+  sendStream,
   deleteThread = deleteConversation,
   createId = () => crypto.randomUUID(),
 }: ChatPageProps) {
@@ -66,6 +149,11 @@ export function ChatPage({
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
+  const [pendingActivity, setPendingActivity] = useState("正在准备回答…");
+  const [pendingAnswer, setPendingAnswer] = useState("");
+  const [pendingCitations, setPendingCitations] = useState<ConversationCitation[]>([]);
+  const [pendingSections, setPendingSections] = useState<PendingSection[]>([]);
+  const [pendingStatus, setPendingStatus] = useState<"streaming" | "failed">("streaming");
   const [openMenuThreadId, setOpenMenuThreadId] = useState<string | null>(null);
   const [confirmingThreadId, setConfirmingThreadId] = useState<string | null>(null);
   const attemptedEmptyBootstrap = useRef(false);
@@ -106,18 +194,115 @@ export function ChatPage({
     },
   });
   const sendMessage = useMutation({
-    mutationFn: async ({ conversationId, text }: { conversationId: string; text: string }) => (
-      send(conversationId, { message_id: createId(), text })
-    ),
+    mutationFn: async ({ conversationId, text }: { conversationId: string; text: string }) => {
+      const input = { message_id: createId(), text };
+      if (!sendStream) return send(conversationId, input);
+      try {
+        return await sendStream(conversationId, input, (event) => {
+          // A fetch reader can deliver multiple complete SSE records in one
+          // microtask. Flush each public event at the boundary so activity
+          // and the first safe delta are paintable before the terminal
+          // response, instead of being collapsed into one React batch.
+          flushSync(() => {
+            if (event.type === "started" || event.type === "activity") {
+              setPendingActivity(activityCopy(event));
+            } else if (event.type === "section_started" && event.section_id) {
+              setPendingSections((current) => [
+                ...current.filter((section) => section.sectionId !== event.section_id),
+                {
+                  sectionId: event.section_id as string,
+                  status: event.status ?? "grounded",
+                  text: "",
+                  citations: event.citations ?? [],
+                  phase: "streaming",
+                },
+              ]);
+              setPendingActivity(
+                event.status === "unsupported" ? "正在标记证据不足部分…" : "正在整理答案…",
+              );
+            } else if (event.type === "text_delta") {
+              setPendingActivity("正在整理答案…");
+              if (event.text && event.section_id) {
+                setPendingSections((current) => current.map((section) => (
+                  section.sectionId === event.section_id
+                    ? { ...section, text: section.text + event.text }
+                    : section
+                )));
+              } else if (event.text) {
+                setPendingAnswer((current) => current + event.text);
+              }
+            } else if (event.type === "section_completed" && event.section_id) {
+              setPendingSections((current) => current.map((section) => (
+                section.sectionId === event.section_id
+                  ? { ...section, phase: "completed" }
+                  : section
+              )));
+            } else if (event.type === "section_aborted" && event.section_id) {
+              setPendingSections((current) => current.filter((section) => section.sectionId !== event.section_id));
+            } else if (event.type === "completed") {
+              setPendingActivity("回答已完成");
+              setPendingSections([]);
+              if (event.response) {
+                setPendingAnswer(event.response.text);
+                setPendingCitations(event.response.citations ?? []);
+              }
+            } else if (event.type === "error" || event.type === "cancelled") {
+              setPendingStatus("failed");
+              setPendingActivity(activityCopy(event));
+              setPendingAnswer(
+                event.response?.text
+                  || (event.type === "cancelled" ? "请求已取消。" : "请求未能完成，请稍后重试。"),
+              );
+              setPendingSections([]);
+            }
+          });
+        });
+      } catch (error) {
+        // A known server without SSE support is the only safe automatic
+        // fallback. A broken stream may already have persisted this message,
+        // so it remains a visible failed turn instead of being resubmitted.
+        if (error instanceof StreamingUnavailableError) {
+          setPendingActivity("正在检索资料库…");
+          setPendingAnswer("");
+          return send(conversationId, input);
+        }
+        throw error;
+      }
+    },
     onSuccess: async () => {
       setDraft("");
       setPendingQuestion(null);
+      setPendingAnswer("");
+      setPendingCitations([]);
+      setPendingSections([]);
+      setPendingActivity("正在准备回答…");
+      setPendingStatus("streaming");
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["conversations"] }),
         queryClient.invalidateQueries({ queryKey: ["conversation", selectedThreadId] }),
       ]);
     },
-    onError: () => setPendingQuestion(null),
+    onError: (error) => {
+      if (error instanceof ConversationStreamError) {
+        setPendingStatus("failed");
+        setPendingSections([]);
+        setPendingCitations([]);
+        setPendingActivity(
+          error.code === "cancelled"
+            ? "请求已取消"
+            : error.response
+              ? "这次检索未能完成"
+              : "流式连接中断，请重试",
+        );
+        if (error.response?.text) setPendingAnswer(error.response.text);
+        return;
+      }
+      setPendingQuestion(null);
+      setPendingAnswer("");
+      setPendingCitations([]);
+      setPendingSections([]);
+      setPendingStatus("failed");
+    },
   });
   const deleteConversationMutation = useMutation({
     mutationFn: async (threadId: string) => {
@@ -135,6 +320,9 @@ export function ChatPage({
       setSelectedThreadId(null);
       setSelectedConversationId(null);
       setPendingQuestion(null);
+      setPendingAnswer("");
+      setPendingActivity("正在准备回答…");
+      setPendingStatus("streaming");
       await queryClient.invalidateQueries({ queryKey: ["conversations"] });
     },
   });
@@ -196,6 +384,11 @@ export function ChatPage({
     if (!chatEnabled) return;
     setDraft("");
     setPendingQuestion(null);
+    setPendingAnswer("");
+    setPendingCitations([]);
+    setPendingSections([]);
+    setPendingActivity("正在准备回答…");
+    setPendingStatus("streaming");
     setSelectedThreadId(null);
     setSelectedConversationId(null);
     newConversation.mutate();
@@ -206,6 +399,11 @@ export function ChatPage({
     const text = draft.trim();
     if (!text || !selectedConversationId || sendMessage.isPending) return;
     setPendingQuestion(text);
+    setPendingAnswer("");
+    setPendingCitations([]);
+    setPendingSections([]);
+    setPendingActivity("正在准备回答…");
+    setPendingStatus("streaming");
     sendMessage.mutate({ conversationId: selectedConversationId, text });
   }
 
@@ -284,7 +482,7 @@ export function ChatPage({
                         onClick={() => selectConversation(item.thread_id, item.conversation_id)}
                       >
                         <strong>{item.title}</strong>
-                        {item.preview ? <span>{item.preview}</span> : null}
+                        {item.preview ? <span>{markdownPreviewText(item.preview)}</span> : null}
                         <time dateTime={item.updated_at}>{displayTime(item.updated_at)}</time>
                       </button>
                       <div
@@ -381,27 +579,35 @@ export function ChatPage({
                     <header className="chat-answer-heading"><p className="eyebrow"><i aria-hidden="true" />资料库回答</p>{(turn.citations?.length ?? 0) > 0 ? <span>依据 {turn.citations?.length}</span> : null}</header>
                     {turn.status === "not_found" ? <p className="chat-answer-state">没有在当前资料库中找到足够依据。</p> : null}
                     {turn.status === "failed" ? <p className="chat-answer-state">这次检索未能完成。</p> : null}
-                    <p className="chat-answer-text">{turn.assistant_text}</p>
+                    <MarkdownAnswer>{assistantTextWithoutSourceList(turn.assistant_text, (turn.citations?.length ?? 0) > 0)}</MarkdownAnswer>
                     {(turn.citations?.length ?? 0) > 0 ? (
                       <section className="chat-evidence" aria-label="回答来源">
-                        <div className="chat-evidence__heading"><p>依据 {turn.citations?.length}</p><span>可跳转原视频</span></div>
-                        <ol className="chat-citations">{turn.citations?.map((citation, citationIndex) => (
-                          <li key={`${citation.url}:${citation.start_sec ?? ""}`}>
-                            <a href={citation.url} target="_blank" rel="noreferrer">
-                              <span className="chat-citation-index">{String(citationIndex + 1).padStart(2, "0")}</span>
-                              <span className="chat-citation-copy"><strong>{citation.title}</strong><small>{citation.excerpt}</small></span>
-                              {startTime(citation.start_sec) ? <span className="chat-citation-time">{startTime(citation.start_sec)} ↗</span> : <span className="chat-citation-time">打开 ↗</span>}
-                            </a>
-                          </li>
-                        ))}</ol>
+                        <div className="chat-evidence__heading"><p>依据 {turn.citations?.length}</p><span>可跳转原视频，字幕默认折叠</span></div>
+                        <CitationList citations={turn.citations ?? []} />
                       </section>
                     ) : null}
                   </article>
                 </li>
               ))}
-              {pendingQuestion ? <li className="chat-turn"><article className="chat-message chat-message--user"><header><p className="eyebrow">问题 {String(turns.length + 1).padStart(2, "0")}</p></header><p className="chat-question-text">{pendingQuestion}</p></article><article className="chat-message chat-message--assistant chat-message--searching"><header className="chat-answer-heading"><p className="eyebrow"><i aria-hidden="true" />资料库回答</p></header><span className="chat-search-line" aria-hidden="true" /><p aria-live="polite">正在检索资料库并核对来源…</p></article></li> : null}
+              {pendingQuestion ? (
+                <li className="chat-turn">
+                  <article className="chat-message chat-message--user"><p className="eyebrow">你的问题</p><p>{pendingQuestion}</p></article>
+                  <article className={`chat-message chat-message--assistant chat-message--${pendingStatus}`}>
+                    <p className="eyebrow">资料库助手</p>
+                    <p aria-live="polite" role={pendingStatus === "failed" ? "alert" : "status"}>{pendingActivity}</p>
+                    {pendingSections.map((section) => (
+                      <section className="chat-pending-section" key={section.sectionId} aria-label={section.status === "unsupported" ? "证据不足部分" : "正在生成回答部分"}>
+                        <MarkdownAnswer>{section.text}</MarkdownAnswer>
+                        <CitationList citations={section.citations} />
+                      </section>
+                    ))}
+                    {pendingAnswer ? <MarkdownAnswer>{pendingAnswer}</MarkdownAnswer> : null}
+                    <CitationList citations={pendingCitations} />
+                  </article>
+                </li>
+              ) : null}
             </ol>
-            {sendMessage.isError ? <p className="chat-error" role="alert">请求未能完成。请检查网络后重新发送。</p> : null}
+            {sendMessage.isError ? <p className="chat-error" role="alert">{sendErrorMessage(sendMessage.error)}</p> : null}
           </div>
           <form className="chat-compose" onSubmit={submit}>
             <label className="sr-only" htmlFor="chat-question">向资料库提问</label>
