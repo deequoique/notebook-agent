@@ -10,6 +10,8 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.agent.types import AgentAnswer
+from app.agent.streaming import AgentStreamEvent
+from app.agent.types import Citation
 from app.config import Settings
 from app.models import AppUser, ChannelIdentity, WebAuthChallenge, WebSession
 from app.web.auth import CSRF_COOKIE_NAME
@@ -44,6 +46,119 @@ class _SlowChannel(_ChannelService):
         self.envelopes.append(envelope)
         await asyncio.sleep(0.05)
         return self.answer
+
+
+class _SectionStreamingChannel(_ChannelService):
+    async def handle_stream(self, envelope):
+        self.envelopes.append(envelope)
+        citation = Citation(
+            item_id=7,
+            segment_id=11,
+            title="公开来源",
+            excerpt="字幕依据",
+            url="https://example.test/video?t=11",
+            start_sec=11,
+        )
+        yield AgentStreamEvent(
+            "activity", envelope.request_id, envelope.message_id, activity="planning_answer"
+        )
+        yield AgentStreamEvent(
+            "section_started", envelope.request_id, envelope.message_id,
+            section_id="section-1", status="grounded", citation_ids=(11,), citations=(citation,)
+        )
+        yield AgentStreamEvent(
+            "text_delta", envelope.request_id, envelope.message_id,
+            section_id="section-1", text="第一段"
+        )
+        yield AgentStreamEvent(
+            "text_delta", envelope.request_id, envelope.message_id,
+            section_id="section-1", text="第二段"
+        )
+        yield AgentStreamEvent(
+            "section_completed", envelope.request_id, envelope.message_id,
+            section_id="section-1", status="grounded"
+        )
+        yield AgentStreamEvent(
+            "section_started", envelope.request_id, envelope.message_id,
+            section_id="section-2", status="unsupported"
+        )
+        yield AgentStreamEvent(
+            "text_delta", envelope.request_id, envelope.message_id,
+            section_id="section-2", text="当前检索证据不足以确认该部分。"
+        )
+        yield AgentStreamEvent(
+            "section_completed", envelope.request_id, envelope.message_id,
+            section_id="section-2", status="unsupported"
+        )
+        yield AgentStreamEvent(
+            "completed", envelope.request_id, envelope.message_id,
+            answer=AgentAnswer(
+                status="ok",
+                text="第一段第二段\n\n当前检索证据不足以确认该部分。",
+                citations=[citation],
+                thread_id="thread-1",
+            ),
+            new_messages=(),
+        )
+
+
+class _CompletedOnlyChannel(_ChannelService):
+    """Simulate a real channel whose provider only supports whole answers."""
+
+    async def handle_stream(self, envelope):
+        self.envelopes.append(envelope)
+        yield AgentStreamEvent(
+            "completed",
+            envelope.request_id,
+            envelope.message_id,
+            answer=self.answer,
+        )
+
+
+def _section_started(envelope, *, request_id: str | None = None):
+    citation = Citation(
+        item_id=7,
+        segment_id=11,
+        title="公开来源",
+        excerpt="字幕依据",
+        url="https://example.test/video?t=11",
+        start_sec=11,
+    )
+    return AgentStreamEvent(
+        "section_started",
+        request_id or envelope.request_id,
+        envelope.message_id,
+        section_id="section-1",
+        status="grounded",
+        citation_ids=(11,),
+        citations=(citation,),
+    )
+
+
+class _MismatchedCorrelationChannel(_ChannelService):
+    async def handle_stream(self, envelope):
+        self.envelopes.append(envelope)
+        yield _section_started(envelope)
+        yield AgentStreamEvent(
+            "text_delta",
+            "wrong-request",
+            envelope.message_id,
+            section_id="section-1",
+            text="不应公开",
+        )
+
+
+class _OpenSectionEofChannel(_ChannelService):
+    async def handle_stream(self, envelope):
+        self.envelopes.append(envelope)
+        yield _section_started(envelope)
+
+
+class _OpenSectionSlowChannel(_ChannelService):
+    async def handle_stream(self, envelope):
+        self.envelopes.append(envelope)
+        yield _section_started(envelope)
+        await asyncio.sleep(0.05)
 
 
 def _settings(**overrides) -> Settings:
@@ -168,6 +283,162 @@ async def test_stream_emits_ordered_safe_sse_events_and_keeps_json_route():
         assert json_response.status_code == 200
         assert json_response.json()["text"] == "这是一个分段传输的安全答案。"
         assert len(channel.envelopes) == 2
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_projects_section_lifecycle_and_citations_before_deltas():
+    settings = _settings()
+    channel = _SectionStreamingChannel()
+    client, origin, csrf, channel = await _authenticated_client(settings, channel)
+    try:
+        response = await client.post(
+            "/api/v1/conversations/browser-thread/messages/stream",
+            json={"message_id": "message-sections", "text": "hello"},
+            headers={**origin, "X-CSRF-Token": csrf},
+        )
+        events = [
+            json.loads(line.removeprefix("data: "))
+            for line in response.text.splitlines()
+            if line.startswith("data: ")
+        ]
+        assert response.status_code == 200
+        assert [event["type"] for event in events] == [
+            "started",
+            "activity",
+            "activity",
+            "section_started",
+            "text_delta",
+            "text_delta",
+            "section_completed",
+            "section_started",
+            "text_delta",
+            "section_completed",
+            "completed",
+        ]
+        first_delta = next(index for index, event in enumerate(events) if event["type"] == "text_delta")
+        assert events[first_delta - 1]["type"] == "section_started"
+        assert events[first_delta - 1]["citation_ids"] == [11]
+        assert events[first_delta - 1]["citations"][0]["title"] == "公开来源"
+        assert events[first_delta]["section_id"] == "section-1"
+        assert events[first_delta + 1]["text"] == "第二段"
+        unsupported = next(event for event in events if event.get("section_id") == "section-2" and event["type"] == "section_started")
+        assert unsupported["status"] == "unsupported"
+        assert unsupported["citation_ids"] == []
+        assert events[-1]["response"]["text"] == "第一段第二段\n\n当前检索证据不足以确认该部分。"
+        assert [event["sequence"] for event in events] == list(range(1, len(events) + 1))
+        assert len(channel.envelopes) == 1
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_provider_fallback_keeps_one_delta_with_handle_stream():
+    settings = _settings()
+    channel = _CompletedOnlyChannel()
+    client, origin, csrf, _ = await _authenticated_client(settings, channel)
+    try:
+        response = await client.post(
+            "/api/v1/conversations/browser-thread/messages/stream",
+            json={"message_id": "message-fallback", "text": "hello"},
+            headers={**origin, "X-CSRF-Token": csrf},
+        )
+        events = [
+            json.loads(line.removeprefix("data: "))
+            for line in response.text.splitlines()
+            if line.startswith("data: ")
+        ]
+        assert [event["type"] for event in events] == [
+            "started",
+            "activity",
+            "text_delta",
+            "completed",
+        ]
+        assert events[-2]["text"] == "这是一个分段传输的安全答案。"
+        assert len(channel.envelopes) == 1
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_rejects_internal_correlation_mismatch_after_aborting_section():
+    settings = _settings()
+    channel = _MismatchedCorrelationChannel()
+    client, origin, csrf, _ = await _authenticated_client(settings, channel)
+    try:
+        response = await client.post(
+            "/api/v1/conversations/browser-thread/messages/stream",
+            json={"message_id": "message-correlation", "text": "hello"},
+            headers={**origin, "X-CSRF-Token": csrf},
+        )
+        events = [
+            json.loads(line.removeprefix("data: "))
+            for line in response.text.splitlines()
+            if line.startswith("data: ")
+        ]
+        assert [event["type"] for event in events] == [
+            "started",
+            "activity",
+            "section_started",
+            "section_aborted",
+            "error",
+        ]
+        assert events[-2]["reason"] == "provider_failure"
+        assert events[-1]["error_code"] == "request_failed"
+        assert "不应公开" not in response.text
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_eof_after_open_section_aborts_before_error():
+    settings = _settings()
+    channel = _OpenSectionEofChannel()
+    client, origin, csrf, _ = await _authenticated_client(settings, channel)
+    try:
+        response = await client.post(
+            "/api/v1/conversations/browser-thread/messages/stream",
+            json={"message_id": "message-eof", "text": "hello"},
+            headers={**origin, "X-CSRF-Token": csrf},
+        )
+        events = [
+            json.loads(line.removeprefix("data: "))
+            for line in response.text.splitlines()
+            if line.startswith("data: ")
+        ]
+        assert events[-2]["type"] == "section_aborted"
+        assert events[-1]["type"] == "error"
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_timeout_after_open_section_aborts_before_error(monkeypatch):
+    import app.api.conversation_routes as conversation_routes
+
+    monkeypatch.setattr(
+        conversation_routes,
+        "_web_agent_transport_timeout",
+        lambda _settings: 0.01,
+    )
+    settings = _settings()
+    channel = _OpenSectionSlowChannel()
+    client, origin, csrf, _ = await _authenticated_client(settings, channel)
+    try:
+        response = await client.post(
+            "/api/v1/conversations/browser-thread/messages/stream",
+            json={"message_id": "message-timeout-section", "text": "hello"},
+            headers={**origin, "X-CSRF-Token": csrf},
+        )
+        events = [
+            json.loads(line.removeprefix("data: "))
+            for line in response.text.splitlines()
+            if line.startswith("data: ")
+        ]
+        assert events[-2]["type"] == "section_aborted"
+        assert events[-2]["reason"] == "timeout"
+        assert events[-1]["type"] == "error"
     finally:
         await client.aclose()
 

@@ -9,6 +9,7 @@ from typing_extensions import TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
+from app.agent.answer_validation import NaturalAnswerValidationError, validate_natural_answer
 from app.agent.context import TurnContext
 from app.channels.types import TenantContext
 
@@ -115,6 +116,68 @@ class AnswerDraft(BaseModel):
     @property
     def decision(self) -> GroundedDraft:
         return GroundedDraft(kind="grounded", sections=self.sections or [])
+
+
+class PlannedSection(BaseModel):
+    """Server-validated section plan used before provider text streaming.
+
+    ``task`` is a short topic/answer assignment, not model-authored answer
+    text.  It gives each section stream enough context to distinguish adjacent
+    questions in a mixed request while staying bounded and source-safe.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    section_id: str = Field(min_length=1, max_length=64)
+    task: str = Field(min_length=1, max_length=240)
+    status: Literal["grounded", "unsupported"]
+    citation_ids: list[int] = Field(default_factory=list, max_length=8)
+
+    @model_validator(mode="after")
+    def validate_citations(self) -> "PlannedSection":
+        try:
+            task = validate_natural_answer(self.task).text
+        except NaturalAnswerValidationError as exc:
+            raise ValueError("planned section task must be short safe topic text") from exc
+        self.task = task
+        if any(
+            isinstance(value, bool) or not isinstance(value, int) or value <= 0
+            for value in self.citation_ids
+        ):
+            raise ValueError("planned citation ids must be positive integers")
+        if len(set(self.citation_ids)) != len(self.citation_ids):
+            raise ValueError("planned citation ids must be unique")
+        if self.status == "grounded" and not self.citation_ids:
+            raise ValueError("grounded planned section requires citations")
+        if self.status == "unsupported" and self.citation_ids:
+            raise ValueError("unsupported planned section must not contain citations")
+        return self
+
+
+class AnswerStreamPlan(BaseModel):
+    """Citation-only plan; it deliberately contains no model-authored text."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["grounded"]
+    sections: list[PlannedSection] = Field(min_length=1, max_length=8)
+
+    @model_validator(mode="after")
+    def validate_plan(self) -> "AnswerStreamPlan":
+        section_ids = [section.section_id for section in self.sections]
+        if len(set(section_ids)) != len(section_ids):
+            raise ValueError("planned section ids must be unique")
+        citation_ids = [
+            citation_id
+            for section in self.sections
+            if section.status == "grounded"
+            for citation_id in section.citation_ids
+        ]
+        if len(set(citation_ids)) != len(citation_ids):
+            raise ValueError("planned citation ids must be unique globally")
+        if not citation_ids:
+            raise ValueError("stream plan requires at least one grounded citation")
+        return self
 # Historical import name retained for integrations; the section itself is
 # unchanged and the top-level duplicate selection field is gone.
 AnswerSection = GroundedSection

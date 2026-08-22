@@ -42,6 +42,26 @@
   canonical browser app; retained conversation routes must not become a
   permanent 503 surface through omitted wiring.
 
+## Conversation streaming contract
+
+- The browser SSE route delegates one `ChannelService` execution. Identity
+  resolution, message idempotency, and durable turn persistence remain owned by
+  that service; the route must not start a second Agent execution or save a
+  second response for a compatibility fallback.
+- A grounded section is public only after its current-run Citation metadata is
+  authorized, then follows `section_started -> text_delta* ->
+  section_completed`. Technical interruption may replace completion with
+  `section_aborted`; a client disconnect, cancellation, timeout, or incomplete
+  section never persists a partial conversation turn.
+- Empty or unsupported provider streaming before any section is public falls
+  back to one whole-answer `text_delta` plus the final response. If a section
+  has already been exposed, the failure is terminal and must not silently
+  replay the answer.
+- Event fields that do not apply to a lifecycle event are omitted from the JSON
+  SSE record when null. Generated TypeScript therefore treats nullable
+  event-specific fields such as `section_id`, `status`, and `reason` as
+  optional; runtime lifecycle validation remains mandatory.
+
 ## OpenAPI and verification
 
 - `scripts/export_web_openapi.py` constructs the real email-enabled production

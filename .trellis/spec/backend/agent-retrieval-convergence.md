@@ -37,6 +37,16 @@ remain server-owned.
   Citation cache; unsupported sections carry no model text or citations and
   render a fixed server-owned evidence-insufficiency notice. The server
   appends source titles, URLs, timestamps, and excerpts.
+- A provider-streamed knowledge answer is citation-first: after the current-run
+  plan and Citation allow-list pass, each grounded section follows
+  `section_started -> text_delta* -> section_completed` (with
+  `section_aborted` for technical interruption). Citation authorization proves
+  only tenant/current-run source ownership and traceability; it is not a
+  semantic fact verifier.
+- If a provider is empty or does not support streaming before any section is
+  public, use the existing whole-answer one-delta compatibility path. Once a
+  section is public, provider failure aborts the turn rather than silently
+  starting a second answer execution.
 - Invalid grounded text or a failed primary run with trusted Citations enters a
   tool-free answer Agent against the same server-filtered evidence allow-list.
   It receives exactly three total provider attempts; invalid output, timeout,
@@ -205,6 +215,9 @@ for each answer-agent attempt. It must be positive and must not exceed
   question plus final visible answer, while the conversation turn keeps the
   same validated public Citation selection. Tool payloads, intermediate Turn
   Agent text, answer prompts, and invalid drafts are never persisted.
+- A streamed section is temporary until the final successful response is
+  assembled. Client disconnect, cancellation, timeout, provider abort, or an
+  incomplete section never persists a partial `ConversationTurn`.
 - Diagnostics use only fixed safe fields. Retrieval events carry
   `agent_phase=retrieval`; composer events carry `agent_phase=answer`.
   `tool_outcome=skipped` is allowed. Answer-stage retries project only a safe
@@ -229,6 +242,9 @@ for each answer-agent attempt. It must be positive and must not exceed
 | non-empty search candidates | enter structured Composer; unsupported sections render fixed server text |
 | natural answer has unknown/missing IDs or six item IDs | run the bounded Composer against the same evidence allow-list |
 | answer draft is invalid, truncated, over limit, timed out, or provider fails | consume one of three answer attempts; after exhaustion return `failed/answer_unavailable` with no Citations or draft persistence |
+| provider stream is empty/unsupported before any section is public | use one whole-answer compatibility delta; do not expose a section lifecycle |
+| provider stream fails after a section is public | emit/propagate section abort and a failed terminal state; do not silently replay the answer |
+| streamed section is cancelled, disconnected, timed out, or incomplete | remove the temporary section and persist no partial conversation turn |
 | provider HTTP request fails | preserve phase behavior; answer-stage retries log only safe status/class; primary retrieval follows the development-only detail policy |
 | valid answer draft | server-rendered markers and grouped real sources, at most five items |
 | action succeeds, including a mixed tool batch | canonical action result wins and composer does not run |

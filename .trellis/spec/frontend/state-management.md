@@ -18,6 +18,10 @@ There is no Redux, Zustand, persistent query cache, or browser-auth store. The s
 - **Security state:** session and CSRF raw tokens. Owned by `Secure` cookies; the session cookie is `HttpOnly`.
 - **Ephemeral login state:** email address, verification code, and current
   email/code step. Held only in `LoginPage` memory until navigation.
+- **Ephemeral conversation stream state:** pending answer sections keyed by
+  `section_id`, including their status, temporary text, Citation DTOs, and
+  streaming/completed/aborted phase. This state is never written to storage or
+  treated as conversation history.
 
 ---
 
@@ -42,6 +46,19 @@ trigger global session teardown.
 - Add-video partial results remain in the open dialog while the library query is invalidated.
 - Transcript cursors are opaque and only passed back to the API.
 - Query cache contents are private tenant data and receive explicit teardown semantics.
+
+## Conversation streaming
+
+- `section_started` creates or replaces one pending section only after the
+  server has authorized its current-run Citation metadata. `text_delta` appends
+  only to the matching open section; duplicate or out-of-order events are
+  rejected by the stream client.
+- `section_completed` marks the section temporary state complete. A final
+  `completed.response` is authoritative and replaces the pending projection,
+  including Citation metadata and server formatting.
+- `section_aborted`, cancellation, timeout, disconnect, or failed terminal
+  state removes the unfinished section and never promotes its partial text to
+  history.
 
 ---
 

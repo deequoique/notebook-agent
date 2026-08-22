@@ -882,39 +882,36 @@ export interface components {
          *     cross this boundary.
          */
         ConversationStreamEvent: {
-            /**
-             * Activity
-             * @default null
-             */
-            activity: ("preparing" | "retrieving" | "composing" | "completed" | "failed" | "cancelled") | null;
-            /**
-             * Error Code
-             * @default null
-             */
-            error_code: string | null;
-            /**
-             * Message
-             * @default null
-             */
-            message: string | null;
+            /** Activity */
+            activity?: ("preparing" | "retrieving" | "planning_answer" | "composing" | "completed" | "failed" | "cancelled") | null;
+            /** Citation Ids */
+            citation_ids?: number[];
+            /** Citations */
+            citations?: components["schemas"]["ConversationCitationResponse"][];
+            /** Error Code */
+            error_code?: string | null;
+            /** Message */
+            message?: string | null;
             /** Message Id */
             message_id: string;
+            /** Reason */
+            reason?: ("provider_failure" | "timeout" | "cancelled") | null;
             /** Request Id */
             request_id: string;
-            /** @default null */
-            response: components["schemas"]["ConversationResponse"] | null;
+            response?: components["schemas"]["ConversationResponse"] | null;
+            /** Section Id */
+            section_id?: string | null;
             /** Sequence */
             sequence: number;
-            /**
-             * Text
-             * @default null
-             */
-            text: string | null;
+            /** Status */
+            status?: ("grounded" | "unsupported") | null;
+            /** Text */
+            text?: string | null;
             /**
              * Type
              * @enum {string}
              */
-            type: "started" | "activity" | "text_delta" | "completed" | "error" | "cancelled";
+            type: "started" | "activity" | "section_started" | "text_delta" | "section_completed" | "section_aborted" | "completed" | "error" | "cancelled";
         };
         /**
          * ConversationTurnResponse

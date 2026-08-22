@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import dataclass
+from collections.abc import AsyncIterator
 from typing import Any, Callable, Literal
 
 from pydantic_ai import UsageLimits
@@ -21,6 +22,8 @@ from app.agent.actions import ActionInputMismatch, AgentActionRuntime, AgentActi
 from app.agent.agent_builder import build_agent
 from app.agent.answer_pipeline import (
     AnswerPipeline,
+    ProviderStreamingUnavailable,
+    SectionStreamFactory,
     _canonical_history,
     build_composer,
 )
@@ -39,6 +42,7 @@ from app.agent.services import (
     KnowledgeServices,
     RetrievalUnavailable,
 )
+from app.agent.streaming import AgentStreamEvent
 from app.agent.types import AgentAnswer, AgentRequest
 from app.config import Settings
 from app.diagnostics import RequestDiagnostics, classify_usage_limit
@@ -104,6 +108,8 @@ class KnowledgeAgent:
         action_factory: Callable[[AgentRequest], AgentActionServices] | None = None,
         *,
         composer_model: Model | str | None = None,
+        stream_model: Model | str | None = None,
+        section_stream_factory: SectionStreamFactory | None = None,
     ) -> None:
         self._agent = build_agent(
             model,
@@ -123,6 +129,9 @@ class KnowledgeAgent:
             self._composer,
             composer_model_settings=self._composer_model_settings,
             settings=settings,
+            stream_model=stream_model,
+            stream_plan_model=answer_model,
+            section_stream_factory=section_stream_factory,
         )
         self._settings = settings
         self._service_factory = service_factory
@@ -180,6 +189,119 @@ class KnowledgeAgent:
             primary.value,
             diagnostics,
             reference_scope,
+        )
+
+    async def stream(
+        self,
+        request: AgentRequest,
+        *,
+        diagnostics: RequestDiagnostics | None = None,
+    ) -> AsyncIterator[AgentStreamEvent]:
+        """Run one turn and expose only validated section lifecycle events.
+
+        This mirrors the preparation and primary retrieval path of ``run``.
+        Persistence remains owned by ``ChannelService`` after the terminal
+        event, so a disconnected or aborted section cannot become history.
+        """
+
+        diagnostics = diagnostics or RequestDiagnostics.start(
+            request.request_id,
+            request.tenant.app_user_id,
+            allow_retrieval_content=self._settings.notebook_agent_log_retrieval_content,
+            environment=self._settings.notebook_agent_env,
+        )
+        parsed = parse_message_references(request.question)
+        reference_scope: tuple[tuple[str, str], ...] = ()
+        actions = self._build_actions(request)
+        diagnostics.event("agent_started", agent_phase="retrieval")
+
+        if parsed.is_url_only_batch:
+            execution = self._bare_url_action(
+                request, actions, parsed.ordered_urls, diagnostics
+            )
+            if execution.answer.text:
+                yield AgentStreamEvent(
+                    "text_delta",
+                    request.request_id,
+                    request.message_id,
+                    text=execution.answer.text,
+                )
+            yield AgentStreamEvent(
+                "completed", request.request_id, request.message_id,
+                answer=execution.answer, new_messages=tuple(execution.new_messages),
+            )
+            return
+
+        services = self._service_factory(request)
+        if isinstance(services, KnowledgeServices):
+            services.set_diagnostics(diagnostics)
+        deps = self._build_deps(
+            request,
+            actions,
+            services,
+            diagnostics,
+            reference_scope,
+            parsed.semantic_remainder,
+            parsed.has_supported_urls and parsed.has_semantic_text,
+        )
+        primary = await self._run_primary_agent(request, deps, diagnostics)
+        if isinstance(primary, AgentExecution):
+            execution = self._attach_read_observations(primary, deps)
+            if execution.answer.text:
+                yield AgentStreamEvent(
+                    "text_delta",
+                    request.request_id,
+                    request.message_id,
+                    text=execution.answer.text,
+                )
+            yield AgentStreamEvent(
+                "completed", request.request_id, request.message_id,
+                answer=execution.answer, new_messages=tuple(execution.new_messages),
+            )
+            return
+
+        # The same trusted gates used by the non-streaming path decide whether
+        # a section plan is applicable. Actions, read failures, canonical
+        # answers, and no-evidence outcomes stay on the compatibility path.
+        natural_text = getattr(primary.value, "output", None)
+        streamable = bool(deps.citations and isinstance(natural_text, str))
+        if streamable:
+            try:
+                deps.todo_store.finalize(
+                    allow_blocked=_allow_blocked_todo_clarification(deps, natural_text)
+                )
+            except TodoValidationError:
+                streamable = False
+        if streamable:
+            yield AgentStreamEvent(
+                "activity", request.request_id, request.message_id,
+                activity="planning_answer",
+            )
+            try:
+                async for event in self._answer_pipeline.stream_answer(
+                    request, deps, diagnostics
+                ):
+                    yield event
+                return
+            except ProviderStreamingUnavailable:
+                # No section/plan provider was explicitly configured. The
+                # caller may invoke the ordinary path exactly once; no plan
+                # request has been made in this branch.
+                pass
+
+        execution = await self._finalize_primary_result(
+            request, deps, primary.value, diagnostics, reference_scope
+        )
+        if execution.answer.text:
+            yield AgentStreamEvent(
+                "text_delta",
+                request.request_id,
+                request.message_id,
+                text=execution.answer.text,
+            )
+        yield AgentStreamEvent(
+            "completed", request.request_id, request.message_id,
+            answer=execution.answer, new_messages=tuple(execution.new_messages),
         )
 
     def _build_actions(self, request: AgentRequest) -> AgentActionRuntime:

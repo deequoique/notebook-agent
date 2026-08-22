@@ -29,10 +29,11 @@ from fastapi import (
 )
 from fastapi.responses import StreamingResponse
 from fastapi.security import APIKeyCookie
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import and_, delete, or_, select
 
 from app.agent.types import AgentAnswer
+from app.agent.streaming import AgentStreamEvent
 from app.api.library_schemas import ErrorResponse
 from app.channels.errors import IdentityError
 from app.channels.identity import consume_link_token, create_link_token
@@ -150,7 +151,10 @@ class ConversationStreamEvent(BaseModel):
     type: Literal[
         "started",
         "activity",
+        "section_started",
         "text_delta",
+        "section_completed",
+        "section_aborted",
         "completed",
         "error",
         "cancelled",
@@ -158,23 +162,70 @@ class ConversationStreamEvent(BaseModel):
     request_id: str = Field(min_length=1, max_length=64)
     message_id: str = Field(min_length=1, max_length=_MAX_MESSAGE_ID)
     sequence: int = Field(ge=1)
+    # These fields are event-specific and are omitted from SSE records when
+    # they do not apply. A default factory keeps the OpenAPI properties
+    # optional instead of turning ``default: null`` into required nullable
+    # fields in generated TypeScript.
     activity: Literal[
         "preparing",
         "retrieving",
+        "planning_answer",
         "composing",
         "completed",
         "failed",
         "cancelled",
-    ] | None = None
-    text: str | None = None
-    response: ConversationResponse | None = None
-    error_code: str | None = None
-    message: str | None = None
+    ] | None = Field(default_factory=lambda: None)
+    section_id: str | None = Field(
+        default_factory=lambda: None, min_length=1, max_length=64
+    )
+    status: Literal["grounded", "unsupported"] | None = Field(
+        default_factory=lambda: None
+    )
+    citation_ids: list[int] = Field(default_factory=list, max_length=8)
+    citations: list[ConversationCitationResponse] = Field(default_factory=list)
+    text: str | None = Field(default_factory=lambda: None)
+    response: ConversationResponse | None = Field(default_factory=lambda: None)
+    error_code: str | None = Field(default_factory=lambda: None)
+    message: str | None = Field(default_factory=lambda: None)
+    reason: Literal["provider_failure", "timeout", "cancelled"] | None = Field(
+        default_factory=lambda: None
+    )
+
+    @model_validator(mode="after")
+    def validate_lifecycle_payload(self) -> "ConversationStreamEvent":
+        if any(
+            isinstance(value, bool) or not isinstance(value, int) or value <= 0
+            for value in self.citation_ids
+        ) or len(set(self.citation_ids)) != len(self.citation_ids):
+            raise ValueError("citation_ids must be unique positive integers")
+        if self.type == "section_started":
+            if self.section_id is None or self.status is None:
+                raise ValueError("section_started requires section_id and status")
+            if self.status == "grounded" and not self.citation_ids:
+                raise ValueError("grounded section_started requires citations")
+            if self.status == "unsupported" and self.citation_ids:
+                raise ValueError("unsupported section_started must not cite sources")
+            if len(self.citations) != len(self.citation_ids):
+                raise ValueError("section_started citation metadata must match IDs")
+        elif self.type == "text_delta":
+            if not self.text:
+                raise ValueError("text_delta requires non-empty text")
+        elif self.type in {"section_completed", "section_aborted"}:
+            if self.section_id is None:
+                raise ValueError(f"{self.type} requires section_id")
+            if self.type == "section_completed" and self.status is None:
+                raise ValueError("section_completed requires status")
+            if self.type == "section_aborted" and self.reason is None:
+                raise ValueError("section_aborted requires reason")
+        elif self.type == "completed" and self.response is None:
+            raise ValueError("completed requires response")
+        return self
 
 
 _STREAM_ACTIVITY_LABELS: dict[str, str] = {
     "preparing": "正在准备回答…",
     "retrieving": "正在检索资料库…",
+    "planning_answer": "正在规划回答依据…",
     "composing": "正在整理答案…",
     "completed": "回答已完成",
     "failed": "这次检索未能完成",
@@ -755,7 +806,10 @@ def build_conversation_router(
                 event_type: Literal[
                     "started",
                     "activity",
+                    "section_started",
                     "text_delta",
+                    "section_completed",
+                    "section_aborted",
                     "completed",
                     "error",
                     "cancelled",
@@ -766,6 +820,11 @@ def build_conversation_router(
                 response: ConversationResponse | None = None,
                 error_code: str | None = None,
                 message: str | None = None,
+                section_id: str | None = None,
+                status: Literal["grounded", "unsupported"] | None = None,
+                citation_ids: tuple[int, ...] = (),
+                citations: list[ConversationCitationResponse] | None = None,
+                reason: Literal["provider_failure", "timeout", "cancelled"] | None = None,
             ) -> ConversationStreamEvent:
                 nonlocal sequence
                 sequence += 1
@@ -778,13 +837,29 @@ def build_conversation_router(
                     message_id=payload.message_id,
                     sequence=sequence,
                     activity=safe_activity,
+                    section_id=section_id,
+                    status=status,
+                    citation_ids=list(citation_ids),
+                    citations=citations or [],
                     text=text,
                     response=response,
                     error_code=_safe_stream_error_code(error_code)
                     if error_code is not None
                     else None,
                     message=message,
+                    reason=reason,
                 )
+
+            def project_citations(values) -> list[ConversationCitationResponse]:
+                return [
+                    ConversationCitationResponse(
+                        title=value.title,
+                        excerpt=value.excerpt,
+                        url=value.url,
+                        start_sec=value.start_sec,
+                    )
+                    for value in values
+                ]
 
             def emit(
                 event: ConversationStreamEvent,
@@ -817,55 +892,267 @@ def build_conversation_router(
                 )
             )
             try:
-                answer = await asyncio.wait_for(
-                    channel.handle(envelope),
-                    timeout=float(getattr(settings, "agent_timeout_seconds", 30.0)),
-                )
-                projected = _safe_stream_response(project_answer(answer))
-                if projected.status == "failed":
+                stream_handler = getattr(channel, "handle_stream", None)
+                if stream_handler is None:
+                    answer = await asyncio.wait_for(
+                        channel.handle(envelope),
+                        timeout=float(getattr(settings, "agent_timeout_seconds", 30.0)),
+                    )
+                    projected = _safe_stream_response(project_answer(answer))
+                    if projected.status == "failed":
+                        yield emit(
+                            next_event(
+                                "activity",
+                                activity="failed",
+                                message=_STREAM_ACTIVITY_LABELS["failed"],
+                            )
+                        )
+                        yield emit(
+                            next_event(
+                                "error",
+                                activity="failed",
+                                response=projected,
+                                error_code=projected.error_code,
+                                message="请求未能完成，请稍后重试。",
+                            ),
+                            outcome="failed",
+                        )
+                        return
                     yield emit(
                         next_event(
                             "activity",
-                            activity="failed",
-                            message=_STREAM_ACTIVITY_LABELS["failed"],
+                            activity="composing",
+                            message=_STREAM_ACTIVITY_LABELS["composing"],
                         )
                     )
+                    # Compatibility path: no provider stream was available,
+                    # so the already safe whole answer is the only delta.
+                    if projected.text:
+                        yield emit(next_event("text_delta", text=projected.text))
+                    yield emit(
+                        next_event(
+                            "completed",
+                            activity="completed",
+                            response=projected,
+                            message=_STREAM_ACTIVITY_LABELS["completed"],
+                        ),
+                        outcome="completed",
+                    )
+                    return
+
+                terminal = False
+                open_section_id: str | None = None
+                open_section_status: Literal["grounded", "unsupported"] | None = None
+                section_lifecycle_seen = False
+                section_ids: set[str] = set()
+                section_citation_ids: set[int] = set()
+                section_aborted = False
+                saw_visible_delta = False
+
+                def abort_open_section(
+                    reason: Literal["provider_failure", "timeout", "cancelled"],
+                ) -> str | None:
+                    nonlocal open_section_id, open_section_status, section_aborted
+                    if open_section_id is None:
+                        return None
+                    section_id = open_section_id
+                    open_section_id = None
+                    open_section_status = None
+                    section_aborted = True
+                    return emit(
+                        next_event(
+                            "section_aborted",
+                            section_id=section_id,
+                            reason=reason,
+                            message="该部分生成已中断。",
+                        )
+                    )
+
+                async with asyncio.timeout(
+                    _web_agent_transport_timeout(settings)
+                ):
+                    async for internal in stream_handler(envelope):
+                        if (
+                            internal.request_id != request_id
+                            or internal.message_id != payload.message_id
+                        ):
+                            raise ValueError("stream event correlation mismatch")
+                        if internal.type == "activity":
+                            activity = internal.activity or "composing"
+                            yield emit(
+                                next_event(
+                                    "activity",
+                                    activity=activity,
+                                    message=_STREAM_ACTIVITY_LABELS.get(
+                                        activity, "正在处理…"
+                                    ),
+                                )
+                            )
+                        elif internal.type == "section_started":
+                            if (
+                                internal.section_id is None
+                                or internal.status is None
+                                or open_section_id is not None
+                                or internal.section_id in section_ids
+                            ):
+                                raise ValueError("invalid section_started lifecycle")
+                            if internal.status == "grounded" and not internal.citation_ids:
+                                raise ValueError("grounded section has no citations")
+                            if internal.status == "unsupported" and internal.citation_ids:
+                                raise ValueError("unsupported section has citations")
+                            if (
+                                len(internal.citation_ids) != len(internal.citations)
+                                or len(set(internal.citation_ids)) != len(internal.citation_ids)
+                                or tuple(internal.citation_ids)
+                                != tuple(citation.segment_id for citation in internal.citations)
+                                or any(
+                                    citation.segment_id in section_citation_ids
+                                    for citation in internal.citations
+                                )
+                            ):
+                                raise ValueError("invalid section citation allow-list")
+                            section_lifecycle_seen = True
+                            section_ids.add(internal.section_id)
+                            section_citation_ids.update(internal.citation_ids)
+                            open_section_id = internal.section_id
+                            open_section_status = internal.status
+                            yield emit(
+                                next_event(
+                                    "section_started",
+                                    section_id=internal.section_id,
+                                    status=internal.status,
+                                    citation_ids=internal.citation_ids,
+                                    citations=project_citations(internal.citations),
+                                )
+                            )
+                        elif internal.type == "text_delta":
+                            if not internal.text:
+                                continue
+                            if section_lifecycle_seen:
+                                if internal.section_id != open_section_id:
+                                    raise ValueError("text_delta is outside open section")
+                            elif internal.section_id is not None:
+                                raise ValueError("text_delta has no section_started")
+                            if internal.text:
+                                saw_visible_delta = True
+                                yield emit(
+                                    next_event(
+                                        "text_delta",
+                                        section_id=internal.section_id,
+                                        text=internal.text,
+                                    )
+                                )
+                        elif internal.type == "section_completed":
+                            if (
+                                internal.section_id is None
+                                or internal.section_id != open_section_id
+                                or internal.status != open_section_status
+                            ):
+                                raise ValueError("invalid section_completed lifecycle")
+                            yield emit(
+                                next_event(
+                                    "section_completed",
+                                    section_id=internal.section_id,
+                                    status=internal.status,
+                                )
+                            )
+                            open_section_id = None
+                            open_section_status = None
+                        elif internal.type == "section_aborted":
+                            if internal.section_id is None or internal.section_id != open_section_id:
+                                raise ValueError("invalid section_aborted lifecycle")
+                            yield emit(
+                                next_event(
+                                    "section_aborted",
+                                    section_id=internal.section_id,
+                                    reason=internal.reason,
+                                    message="该部分生成已中断。",
+                                )
+                            )
+                            open_section_id = None
+                            open_section_status = None
+                            section_aborted = True
+                        elif internal.type == "completed" and internal.answer is not None:
+                            if open_section_id is not None:
+                                raise ValueError("completed event has an open section")
+                            projected = _safe_stream_response(
+                                project_answer(internal.answer)
+                            )
+                            if section_aborted and projected.status != "failed":
+                                raise ValueError("aborted stream cannot complete successfully")
+                            if projected.status == "failed":
+                                error_type = (
+                                    "cancelled"
+                                    if projected.error_code == "cancelled"
+                                    else "error"
+                                )
+                                yield emit(
+                                    next_event(
+                                        error_type,
+                                        activity=(
+                                            "cancelled"
+                                            if error_type == "cancelled"
+                                            else "failed"
+                                        ),
+                                        response=projected,
+                                        error_code=projected.error_code,
+                                        message=(
+                                            "请求已取消。"
+                                            if error_type == "cancelled"
+                                            else "请求未能完成，请稍后重试。"
+                                        ),
+                                    ),
+                                    outcome=(
+                                        "cancelled" if error_type == "cancelled" else "failed"
+                                    ),
+                                )
+                            else:
+                                if (
+                                    not section_lifecycle_seen
+                                    and not saw_visible_delta
+                                    and projected.text
+                                ):
+                                    # A real ChannelService still has a
+                                    # handle_stream method when its provider
+                                    # cannot stream.  Preserve the old
+                                    # one-delta contract without starting a
+                                    # second execution.
+                                    saw_visible_delta = True
+                                    yield emit(
+                                        next_event(
+                                            "text_delta",
+                                            text=projected.text,
+                                        )
+                                    )
+                                yield emit(
+                                    next_event(
+                                        "completed",
+                                        activity="completed",
+                                        response=projected,
+                                        message=_STREAM_ACTIVITY_LABELS["completed"],
+                                    ),
+                                    outcome="completed",
+                                )
+                            terminal = True
+                            break
+                if not terminal:
+                    aborted = abort_open_section("provider_failure")
+                    if aborted is not None:
+                        yield aborted
                     yield emit(
                         next_event(
                             "error",
                             activity="failed",
-                            response=projected,
-                            error_code=projected.error_code,
-                            message="请求未能完成，请稍后重试。",
+                            error_code="request_failed",
+                            message="流式响应未正常结束，请稍后重试。",
                         ),
                         outcome="failed",
                     )
-                    return
-                yield emit(
-                    next_event(
-                        "activity",
-                        activity="composing",
-                        message=_STREAM_ACTIVITY_LABELS["composing"],
-                    )
-                )
-                # Provider-level token streaming is intentionally not
-                # fabricated here.  The whole-answer compatibility service
-                # produces one safe delta, which still exercises the same
-                # public protocol and keeps persistence single-shot.
-                if projected.text:
-                    yield emit(
-                        next_event("text_delta", text=projected.text)
-                    )
-                yield emit(
-                    next_event(
-                        "completed",
-                        activity="completed",
-                        response=projected,
-                        message=_STREAM_ACTIVITY_LABELS["completed"],
-                    ),
-                    outcome="completed",
-                )
             except asyncio.CancelledError:
+                if stream_handler is not None:
+                    aborted = abort_open_section("cancelled")
+                    if aborted is not None:
+                        yield aborted
                 cancelled = ConversationResponse(
                     status="failed",
                     text="请求已取消。",
@@ -886,6 +1173,10 @@ def build_conversation_router(
                     outcome="cancelled",
                 )
             except TimeoutError:
+                if stream_handler is not None:
+                    aborted = abort_open_section("timeout")
+                    if aborted is not None:
+                        yield aborted
                 failed = ConversationResponse(
                     status="failed",
                     text="请求超时，请稍后重试。",
@@ -904,6 +1195,10 @@ def build_conversation_router(
                 )
             except Exception:
                 # Do not copy exception details into the browser or logs.
+                if stream_handler is not None:
+                    aborted = abort_open_section("provider_failure")
+                    if aborted is not None:
+                        yield aborted
                 failed = ConversationResponse(
                     status="failed",
                     text="请求无法完成，请稍后重试。",

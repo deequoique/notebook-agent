@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/agent-retrieval-convergence.md","reason":"Citation allow-list、Answer Composer、unsupported 和单次持久化边界"}
+{"file":".trellis/spec/backend/web-browser-runtime.md","reason":"浏览器认证、CSRF、tenant 传输和 SSE 路由所有权"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"取消、超时、section abort 和公开错误终态"}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"provider stream 生命周期指标和敏感内容禁令"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"按 section 管理临时 delta、abort 和最终 response 校正"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"OpenAPI 生成的 section SSE 事件和严格客户端解析"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Citation 折叠展示、可访问性和 ChatPage 渲染"}

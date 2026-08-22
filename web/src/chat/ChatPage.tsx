@@ -14,6 +14,7 @@ import {
 } from "../api/client";
 import type {
   Capabilities,
+  ConversationCitation,
   ConversationHistoryPage,
   ConversationResponse,
   ConversationStreamEvent,
@@ -48,6 +49,14 @@ function sendErrorMessage(error: Error | null): string {
 interface NewConversationResult {
   conversationId: string;
   response: ConversationResponse;
+}
+
+interface PendingSection {
+  sectionId: string;
+  status: "grounded" | "unsupported";
+  text: string;
+  citations: ConversationCitation[];
+  phase: "streaming" | "completed";
 }
 
 function displayTime(value: string): string {
@@ -93,6 +102,7 @@ const fallbackQuestions = [
 const ACTIVITY_COPY: Record<string, string> = {
   preparing: "正在准备回答…",
   retrieving: "正在检索资料库…",
+  planning_answer: "正在规划回答依据…",
   composing: "正在整理答案…",
   completed: "回答已完成",
   failed: "这次检索未能完成",
@@ -101,6 +111,27 @@ const ACTIVITY_COPY: Record<string, string> = {
 
 function activityCopy(event: ConversationStreamEvent): string {
   return event.activity ? (ACTIVITY_COPY[event.activity] ?? "正在处理…") : "正在处理…";
+}
+
+function CitationList({ citations }: { citations: ConversationCitation[] }) {
+  if (!citations.length) return null;
+  return (
+    <ol className="chat-citations">
+      {citations.map((citation, citationIndex) => (
+        <li key={`${citation.url}:${citation.start_sec ?? ""}:${citationIndex}`}>
+          <a href={citation.url} target="_blank" rel="noreferrer">
+            <span className="chat-citation-index">{String(citationIndex + 1).padStart(2, "0")}</span>
+            <span className="chat-citation-copy"><strong>{citation.title}</strong></span>
+            {startTime(citation.start_sec) ? <span className="chat-citation-time">{startTime(citation.start_sec)} ↗</span> : <span className="chat-citation-time">打开 ↗</span>}
+          </a>
+          <details className="chat-citation-excerpt">
+            <summary>展开字幕依据</summary>
+            <p>{citation.excerpt}</p>
+          </details>
+        </li>
+      ))}
+    </ol>
+  );
 }
 
 export function ChatPage({
@@ -120,6 +151,8 @@ export function ChatPage({
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const [pendingActivity, setPendingActivity] = useState("正在准备回答…");
   const [pendingAnswer, setPendingAnswer] = useState("");
+  const [pendingCitations, setPendingCitations] = useState<ConversationCitation[]>([]);
+  const [pendingSections, setPendingSections] = useState<PendingSection[]>([]);
   const [pendingStatus, setPendingStatus] = useState<"streaming" | "failed">("streaming");
   const [openMenuThreadId, setOpenMenuThreadId] = useState<string | null>(null);
   const [confirmingThreadId, setConfirmingThreadId] = useState<string | null>(null);
@@ -173,12 +206,46 @@ export function ChatPage({
           flushSync(() => {
             if (event.type === "started" || event.type === "activity") {
               setPendingActivity(activityCopy(event));
+            } else if (event.type === "section_started" && event.section_id) {
+              setPendingSections((current) => [
+                ...current.filter((section) => section.sectionId !== event.section_id),
+                {
+                  sectionId: event.section_id as string,
+                  status: event.status ?? "grounded",
+                  text: "",
+                  citations: event.citations ?? [],
+                  phase: "streaming",
+                },
+              ]);
+              setPendingActivity(
+                event.status === "unsupported" ? "正在标记证据不足部分…" : "正在整理答案…",
+              );
             } else if (event.type === "text_delta") {
               setPendingActivity("正在整理答案…");
-              if (event.text) setPendingAnswer((current) => current + event.text);
+              if (event.text && event.section_id) {
+                setPendingSections((current) => current.map((section) => (
+                  section.sectionId === event.section_id
+                    ? { ...section, text: section.text + event.text }
+                    : section
+                )));
+              } else if (event.text) {
+                setPendingAnswer((current) => current + event.text);
+              }
+            } else if (event.type === "section_completed" && event.section_id) {
+              setPendingSections((current) => current.map((section) => (
+                section.sectionId === event.section_id
+                  ? { ...section, phase: "completed" }
+                  : section
+              )));
+            } else if (event.type === "section_aborted" && event.section_id) {
+              setPendingSections((current) => current.filter((section) => section.sectionId !== event.section_id));
             } else if (event.type === "completed") {
               setPendingActivity("回答已完成");
-              if (event.response?.text) setPendingAnswer(event.response.text);
+              setPendingSections([]);
+              if (event.response) {
+                setPendingAnswer(event.response.text);
+                setPendingCitations(event.response.citations ?? []);
+              }
             } else if (event.type === "error" || event.type === "cancelled") {
               setPendingStatus("failed");
               setPendingActivity(activityCopy(event));
@@ -186,6 +253,7 @@ export function ChatPage({
                 event.response?.text
                   || (event.type === "cancelled" ? "请求已取消。" : "请求未能完成，请稍后重试。"),
               );
+              setPendingSections([]);
             }
           });
         });
@@ -205,6 +273,8 @@ export function ChatPage({
       setDraft("");
       setPendingQuestion(null);
       setPendingAnswer("");
+      setPendingCitations([]);
+      setPendingSections([]);
       setPendingActivity("正在准备回答…");
       setPendingStatus("streaming");
       await Promise.all([
@@ -215,6 +285,8 @@ export function ChatPage({
     onError: (error) => {
       if (error instanceof ConversationStreamError) {
         setPendingStatus("failed");
+        setPendingSections([]);
+        setPendingCitations([]);
         setPendingActivity(
           error.code === "cancelled"
             ? "请求已取消"
@@ -227,6 +299,8 @@ export function ChatPage({
       }
       setPendingQuestion(null);
       setPendingAnswer("");
+      setPendingCitations([]);
+      setPendingSections([]);
       setPendingStatus("failed");
     },
   });
@@ -311,6 +385,8 @@ export function ChatPage({
     setDraft("");
     setPendingQuestion(null);
     setPendingAnswer("");
+    setPendingCitations([]);
+    setPendingSections([]);
     setPendingActivity("正在准备回答…");
     setPendingStatus("streaming");
     setSelectedThreadId(null);
@@ -324,6 +400,8 @@ export function ChatPage({
     if (!text || !selectedConversationId || sendMessage.isPending) return;
     setPendingQuestion(text);
     setPendingAnswer("");
+    setPendingCitations([]);
+    setPendingSections([]);
     setPendingActivity("正在准备回答…");
     setPendingStatus("streaming");
     sendMessage.mutate({ conversationId: selectedConversationId, text });
@@ -504,22 +582,30 @@ export function ChatPage({
                     <MarkdownAnswer>{assistantTextWithoutSourceList(turn.assistant_text, (turn.citations?.length ?? 0) > 0)}</MarkdownAnswer>
                     {(turn.citations?.length ?? 0) > 0 ? (
                       <section className="chat-evidence" aria-label="回答来源">
-                        <div className="chat-evidence__heading"><p>依据 {turn.citations?.length}</p><span>可跳转原视频</span></div>
-                        <ol className="chat-citations">{turn.citations?.map((citation, citationIndex) => (
-                          <li key={`${citation.url}:${citation.start_sec ?? ""}`}>
-                            <a href={citation.url} target="_blank" rel="noreferrer">
-                              <span className="chat-citation-index">{String(citationIndex + 1).padStart(2, "0")}</span>
-                              <span className="chat-citation-copy"><strong>{citation.title}</strong><small>{citation.excerpt}</small></span>
-                              {startTime(citation.start_sec) ? <span className="chat-citation-time">{startTime(citation.start_sec)} ↗</span> : <span className="chat-citation-time">打开 ↗</span>}
-                            </a>
-                          </li>
-                        ))}</ol>
+                        <div className="chat-evidence__heading"><p>依据 {turn.citations?.length}</p><span>可跳转原视频，字幕默认折叠</span></div>
+                        <CitationList citations={turn.citations ?? []} />
                       </section>
                     ) : null}
                   </article>
                 </li>
               ))}
-              {pendingQuestion ? <li className="chat-turn"><article className="chat-message chat-message--user"><p className="eyebrow">你的问题</p><p>{pendingQuestion}</p></article><article className={`chat-message chat-message--assistant chat-message--${pendingStatus}`}><p className="eyebrow">资料库助手</p><p aria-live="polite" role={pendingStatus === "failed" ? "alert" : "status"}>{pendingActivity}</p>{pendingAnswer ? <p aria-live="polite">{pendingAnswer}</p> : null}</article></li> : null}
+              {pendingQuestion ? (
+                <li className="chat-turn">
+                  <article className="chat-message chat-message--user"><p className="eyebrow">你的问题</p><p>{pendingQuestion}</p></article>
+                  <article className={`chat-message chat-message--assistant chat-message--${pendingStatus}`}>
+                    <p className="eyebrow">资料库助手</p>
+                    <p aria-live="polite" role={pendingStatus === "failed" ? "alert" : "status"}>{pendingActivity}</p>
+                    {pendingSections.map((section) => (
+                      <section className="chat-pending-section" key={section.sectionId} aria-label={section.status === "unsupported" ? "证据不足部分" : "正在生成回答部分"}>
+                        <MarkdownAnswer>{section.text}</MarkdownAnswer>
+                        <CitationList citations={section.citations} />
+                      </section>
+                    ))}
+                    {pendingAnswer ? <MarkdownAnswer>{pendingAnswer}</MarkdownAnswer> : null}
+                    <CitationList citations={pendingCitations} />
+                  </article>
+                </li>
+              ) : null}
             </ol>
             {sendMessage.isError ? <p className="chat-error" role="alert">{sendErrorMessage(sendMessage.error)}</p> : null}
           </div>

@@ -138,13 +138,17 @@ curl -sS -b "$COOKIE_JAR" -X POST \
 `request_id`、`message_id` 和从 1 开始递增的 `sequence`：
 
 ```text
-started → activity(retrieving|composing) → text_delta* → completed
+started → activity(retrieving|planning_answer) →
+section_started → text_delta* → section_completed → completed
 ```
 
-异常终态为 `error` 或 `cancelled`，并带固定的安全错误摘要。`activity` 只来自受控
-阶段标签；provider 内容、工具参数、原始日志和隐藏推理不会进入事件。客户端应按
-`request_id` 校验并忽略重复/过期 sequence，遇到缺口或连接中断显示失败状态，不要
-静默重发同一消息。将 `AGENT_STREAMING_ENABLED` 设为 `false`、`0`、`no` 或 `off`
+`section_started` 会先携带本轮已校验的 `citation_ids` 和来源元数据；正文
+`text_delta` 必须带对应 `section_id`。`unsupported` section 只发送服务器固定的
+证据不足文案，不调用正文模型。异常终态为 `error` 或 `cancelled`，并带固定的安全错误摘要；
+技术中断可先发送 `section_aborted`。`activity` 只来自受控阶段标签；provider 内容、
+工具参数、原始日志和隐藏推理不会进入事件。客户端应按 `request_id` 校验并忽略重复/过期
+sequence，遇到缺口或连接中断显示失败状态，不要静默重发同一消息。将
+`AGENT_STREAMING_ENABLED` 设为 `false`、`0`、`no` 或 `off`
 时该路径返回 `406 streaming_disabled`，浏览器只做一次原 JSON endpoint 降级；原
 `/messages` 路径始终保留给不支持 SSE 的客户端。
 

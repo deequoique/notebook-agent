@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/agent-retrieval-convergence.md","reason":"复核 Citation 只承担 tenant/本轮来源授权且不绕过现有 grounded 边界"}
+{"file":".trellis/spec/backend/web-browser-runtime.md","reason":"复核 SSE 单次执行、CSRF、断线取消和持久化所有权"}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"扫描正文 delta、Citation 内容和 provider/tool payload 泄漏"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"执行前端测试、类型检查、构建和移动端回归"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"复核生成契约、sequence/section 状态机和运行时窄化"}

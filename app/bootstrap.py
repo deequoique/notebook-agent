@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from app.agent.actions import AgentActionServices
-from app.agent.provider import build_model
+from app.agent.provider import build_model, model_supports_streaming
 from app.agent.runtime import KnowledgeAgent
 from app.agent.services import KnowledgeServices
 from app.agent.management import KnowledgeItemManagementService
@@ -69,11 +69,17 @@ def build_knowledge_agent(
     # Python TLS environment before provider construction.  Do not create a
     # per-model httpx client here: the provider owns its default client and its
     # lifecycle, while the embedding client receives the same context directly.
+    model = build_model(settings)
+    # Provider-level streaming is opt-in by capability. String model names are
+    # kept on the one-delta compatibility path because capability cannot be
+    # established without making a provider request.
+    stream_model = model if model_supports_streaming(model) else None
     return KnowledgeAgent(
-        build_model(settings),
+        model,
         settings,
         service_factory,
         action_factory=action_factory,
+        stream_model=stream_model,
     )
 
 

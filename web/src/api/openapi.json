@@ -1008,6 +1008,7 @@
                 "enum": [
                   "preparing",
                   "retrieving",
+                  "planning_answer",
                   "composing",
                   "completed",
                   "failed",
@@ -1019,8 +1020,22 @@
                 "type": "null"
               }
             ],
-            "default": null,
             "title": "Activity"
+          },
+          "citation_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 8,
+            "title": "Citation Ids",
+            "type": "array"
+          },
+          "citations": {
+            "items": {
+              "$ref": "#/components/schemas/ConversationCitationResponse"
+            },
+            "title": "Citations",
+            "type": "array"
           },
           "error_code": {
             "anyOf": [
@@ -1031,7 +1046,6 @@
                 "type": "null"
               }
             ],
-            "default": null,
             "title": "Error Code"
           },
           "message": {
@@ -1043,7 +1057,6 @@
                 "type": "null"
               }
             ],
-            "default": null,
             "title": "Message"
           },
           "message_id": {
@@ -1051,6 +1064,22 @@
             "minLength": 1,
             "title": "Message Id",
             "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "provider_failure",
+                  "timeout",
+                  "cancelled"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
           },
           "request_id": {
             "maxLength": 64,
@@ -1066,13 +1095,40 @@
               {
                 "type": "null"
               }
+            ]
+          },
+          "section_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "default": null
+            "title": "Section Id"
           },
           "sequence": {
             "minimum": 1,
             "title": "Sequence",
             "type": "integer"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "grounded",
+                  "unsupported"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
           },
           "text": {
             "anyOf": [
@@ -1083,14 +1139,16 @@
                 "type": "null"
               }
             ],
-            "default": null,
             "title": "Text"
           },
           "type": {
             "enum": [
               "started",
               "activity",
+              "section_started",
               "text_delta",
+              "section_completed",
+              "section_aborted",
               "completed",
               "error",
               "cancelled"

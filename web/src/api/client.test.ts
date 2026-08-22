@@ -134,6 +134,58 @@ describe("same-origin API client", () => {
     expect(init.credentials).toBe("same-origin");
   });
 
+  it("parses citation-first section lifecycle events and preserves section metadata", async () => {
+    const final = {
+      status: "ok",
+      text: "第一段第二段",
+      citations: [{ title: "来源视频", excerpt: "字幕依据", url: "https://example.test/video", start_sec: 11 }],
+      action_results: [],
+      thread_id: "thread-1",
+      error_code: null,
+    };
+    const seen: Array<{ type: string; section_id?: string | null }> = [];
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response([
+        streamRecord({ type: "started", request_id: "request-section", message_id: "message-section", sequence: 1, activity: "preparing" }),
+        streamRecord({ type: "section_started", request_id: "request-section", message_id: "message-section", sequence: 2, section_id: "section-1", status: "grounded", citation_ids: [11], citations: final.citations }),
+        streamRecord({ type: "text_delta", request_id: "request-section", message_id: "message-section", sequence: 3, section_id: "section-1", text: "第一段" }),
+        streamRecord({ type: "text_delta", request_id: "request-section", message_id: "message-section", sequence: 4, section_id: "section-1", text: "第二段" }),
+        streamRecord({ type: "section_completed", request_id: "request-section", message_id: "message-section", sequence: 5, section_id: "section-1", status: "grounded" }),
+        streamRecord({ type: "completed", request_id: "request-section", message_id: "message-section", sequence: 6, response: final }),
+      ].join(""), { status: 200, headers: { "Content-Type": "text/event-stream" } }),
+    );
+    await expect(streamConversationMessage(
+      "conversation-1",
+      { message_id: "message-section", text: "问题" },
+      (event) => seen.push({ type: event.type, section_id: event.section_id }),
+    )).resolves.toEqual(final);
+    expect(seen).toEqual([
+      { type: "started", section_id: undefined },
+      { type: "section_started", section_id: "section-1" },
+      { type: "text_delta", section_id: "section-1" },
+      { type: "text_delta", section_id: "section-1" },
+      { type: "section_completed", section_id: "section-1" },
+      { type: "completed", section_id: undefined },
+    ]);
+  });
+
+  it("rejects section deltas that escape their validated lifecycle", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response([
+        streamRecord({ type: "started", request_id: "request-invalid-section", message_id: "message-invalid-section", sequence: 1, activity: "preparing" }),
+        streamRecord({ type: "section_started", request_id: "request-invalid-section", message_id: "message-invalid-section", sequence: 2, section_id: "section-1", status: "grounded", citation_ids: [11], citations: [{ title: "来源视频", excerpt: "字幕依据", url: "https://example.test/video", start_sec: 11 }] }),
+        streamRecord({ type: "text_delta", request_id: "request-invalid-section", message_id: "message-invalid-section", sequence: 3, section_id: "section-2", text: "越界文本" }),
+      ].join(""), { status: 200, headers: { "Content-Type": "text/event-stream" } }),
+    );
+
+    await expect(
+      streamConversationMessage(
+        "conversation-1",
+        { message_id: "message-invalid-section", text: "问题" },
+      ),
+    ).rejects.toEqual(expect.objectContaining({ code: "stream_protocol_error" }));
+  });
+
   it("ignores duplicate sequence numbers but rejects a future sequence", async () => {
     const final = {
       status: "ok",

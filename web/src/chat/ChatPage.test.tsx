@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
@@ -171,7 +171,7 @@ describe("AI search chat page", () => {
     const input = await screen.findByRole("textbox", { name: "向资料库提问" });
     await waitFor(() => expect(input).toBeEnabled());
     await user.type(input, "拟定四分钟演讲大纲");
-    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    await user.click(screen.getByRole("button", { name: /发送问题/ }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("回答生成超时，请重新发送。");
     expect(screen.queryByText(/检查网络/)).not.toBeInTheDocument();
@@ -303,7 +303,7 @@ describe("AI search chat page", () => {
     const input = await screen.findByRole("textbox", { name: "向资料库提问" });
     await waitFor(() => expect(input).toBeEnabled());
     await user.type(input, "流式问题");
-    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    await user.click(screen.getByRole("button", { name: /发送问题/ }));
 
     expect(await screen.findByText("正在整理答案…")).toBeInTheDocument();
     expect(screen.getByText("流式片段")).toBeInTheDocument();
@@ -394,7 +394,7 @@ describe("AI search chat page", () => {
     const input = await screen.findByRole("textbox", { name: "向资料库提问" });
     await waitFor(() => expect(input).toBeEnabled());
     await user.type(input, "同一批事件的问题");
-    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    await user.click(screen.getByRole("button", { name: /发送问题/ }));
 
     expect(activityWasPaintable).toBe(true);
     expect(deltaWasPaintable).toBe(true);
@@ -417,7 +417,7 @@ describe("AI search chat page", () => {
     const input = await screen.findByRole("textbox", { name: "向资料库提问" });
     await waitFor(() => expect(input).toBeEnabled());
     await user.type(input, "兼容模式问题");
-    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    await user.click(screen.getByRole("button", { name: /发送问题/ }));
 
     await waitFor(() => expect(send).toHaveBeenCalledOnce());
     expect(sendStream).toHaveBeenCalledOnce();
@@ -425,5 +425,59 @@ describe("AI search chat page", () => {
       message_id: "new-id",
       text: "兼容模式问题",
     });
+  });
+
+  it("renders citation-first sections with collapsed excerpts while streaming", async () => {
+    const user = userEvent.setup();
+    let release: () => void = () => undefined;
+    const sendStream = vi.fn(async (
+      _conversationId: string,
+      _input: { message_id: string; text: string },
+      onEvent: (event: ConversationStreamEvent) => void,
+    ) => {
+      onEvent({
+        type: "started", request_id: "request-section", message_id: "new-id", sequence: 1,
+        activity: "preparing", text: null, response: null, error_code: null, message: null,
+      });
+      onEvent({
+        type: "section_started", request_id: "request-section", message_id: "new-id", sequence: 2,
+        section_id: "section-1", status: "grounded", citation_ids: [11],
+        citations: [{ title: "来源视频", excerpt: "字幕内容", url: "https://example.test/video", start_sec: 11 }],
+        activity: null, text: null, response: null, error_code: null, message: null,
+      });
+      onEvent({
+        type: "text_delta", request_id: "request-section", message_id: "new-id", sequence: 3,
+        section_id: "section-1", text: "分段答案", activity: null, response: null,
+        error_code: null, message: null,
+      });
+      await new Promise<void>((resolve) => { release = resolve; });
+      onEvent({
+        type: "section_completed", request_id: "request-section", message_id: "new-id", sequence: 4,
+        section_id: "section-1", status: "grounded", activity: null, text: null, response: null,
+        error_code: null, message: null,
+      });
+      onEvent({
+        type: "completed", request_id: "request-section", message_id: "new-id", sequence: 5,
+        activity: "completed", text: null,
+        response: {
+          status: "ok", text: "分段答案", citations: [{ title: "来源视频", excerpt: "字幕内容", url: "https://example.test/video", start_sec: 11 }],
+          action_results: [], thread_id: "thread-1", error_code: null,
+        }, error_code: null, message: "回答已完成",
+      });
+      return { status: "ok", text: "分段答案", citations: [], action_results: [], thread_id: "thread-1", error_code: null };
+    });
+    renderPage({ sendStream });
+
+    const input = await screen.findByRole("textbox", { name: "向资料库提问" });
+    await waitFor(() => expect(input).toBeEnabled());
+    await user.type(input, "分段问题");
+    await user.click(screen.getByRole("button", { name: /发送问题/ }));
+    expect(await screen.findByText("分段答案")).toBeInTheDocument();
+    expect(screen.getByText("来源视频")).toBeInTheDocument();
+    const pendingSection = screen.getByRole("region", { name: "正在生成回答部分" });
+    const excerptSummary = within(pendingSection).getByText("展开字幕依据");
+    expect(excerptSummary).toBeInTheDocument();
+    expect(excerptSummary.closest("details")).not.toHaveAttribute("open");
+    release();
   });
 });

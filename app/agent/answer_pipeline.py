@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterable
+from collections.abc import AsyncIterator, Callable, Iterable
 
 from pydantic_ai import (
     Agent,
@@ -31,7 +31,7 @@ from app.agent.answer_validation import (
     NaturalAnswerValidationError,
     validate_natural_answer,
 )
-from app.agent.provider import composer_model_settings
+from app.agent.provider import composer_model_settings, model_supports_streaming
 from app.agent.runtime_state import (
     COMPRESSED_EVIDENCE_LIMIT,
     ComposerDeps,
@@ -49,9 +49,12 @@ from app.agent.response import (
 from app.agent.types import (
     AgentRequest,
     AnswerDraft,
+    AnswerStreamPlan,
     GroundedDraft,
     Citation,
+    PlannedSection,
 )
+from app.agent.streaming import AgentStreamEvent
 from app.config import Settings
 from app.diagnostics import RequestDiagnostics, classify_usage_limit
 
@@ -76,6 +79,29 @@ _COMPOSER_SCHEMA_GUIDANCE = (
     f"{_COMPOSER_JSON_EXAMPLE}\n{_COMPOSER_GLOBAL_CONSTRAINTS}"
 )
 
+
+class ProviderStreamingUnavailable(RuntimeError):
+    """The configured provider cannot satisfy the safe section stream seam."""
+
+
+_EMPTY_PROVIDER_STREAM_ERROR = "stream function must return at least one item"
+
+
+def _is_provider_stream_unavailable_error(error: BaseException) -> bool:
+    """Recognize only provider capability failures before public text exists."""
+
+    if isinstance(error, NotImplementedError):
+        return True
+    return (
+        isinstance(error, ValueError)
+        and str(error).strip().casefold() == _EMPTY_PROVIDER_STREAM_ERROR
+    )
+
+
+SectionStreamFactory = Callable[
+    [str, PlannedSection, tuple[Citation, ...]], AsyncIterator[str]
+]
+
 COMPOSER_INSTRUCTIONS = f"""
 你是私有知识库的回答编辑器。只能依据服务器提供的证据写回答，不能使用模型记忆补充事实。
 输出结构化 sections；有证据的 section 写简洁中文文本并列出支持该 section 的 segment ID；
@@ -88,6 +114,92 @@ COMPOSER_INSTRUCTIONS = f"""
 回答只选择与问题相关的视频；每个选中的视频至少引用一个 segment。
 {_COMPOSER_SCHEMA_GUIDANCE}
 """.strip()
+
+STREAM_PLAN_INSTRUCTIONS = f"""
+你是私有知识库回答的分段规划器。你只能从服务器提供的证据中选择来源，不能写任何回答正文。
+输出 AnswerStreamPlan JSON。每个 section 必须有稳定的 section_id、简短 task 和 status；task
+只是该部分要回答的主题/任务，不是回答正文，最多 240 个字符，不得包含 URL、Citation 标记或
+来源区块。grounded section 至少选择一个可用 citation_id，unsupported section 必须不带
+citation_ids。所有 citation_id 在整个计划中不得重复，服务器会再次校验本轮 allow-list。
+无法确认的问题部分使用 unsupported。不要输出标题、字幕、来源区块、解释文字或任何模型正文。
+只返回一个符合 schema 的 JSON，例如：
+{{"kind":"grounded","sections":[{{"section_id":"q1","task":"概括第一个问题的结论","status":"grounded","citation_ids":[123]}},{{"section_id":"q2","task":"确认第二个问题","status":"unsupported","citation_ids":[]}}]}}
+""".strip()
+
+STREAM_SECTION_INSTRUCTIONS = (
+    "你是私有知识库回答编辑器。只回答当前 section 的任务，不调用工具，不改变锁定来源。"
+    "只能依据服务器提供的证据进行简洁总结。不要输出 URL、Markdown 链接、来源区块、"
+    "视频标题、字幕引用、[S…] 标记、原始 HTML 或模型推理。只输出最终可见正文。"
+)
+
+
+def build_stream_plan(
+    model: Model | str,
+    *,
+    tool_timeout: float = 15.0,
+) -> Agent[ComposerDeps, AnswerStreamPlan]:
+    """Build the Citation-only first stage of provider-level streaming."""
+
+    plan = Agent(
+        model,
+        deps_type=ComposerDeps,
+        output_type=PromptedOutput(AnswerStreamPlan),
+        instructions=STREAM_PLAN_INSTRUCTIONS,
+        retries={"output": 0},
+        tool_timeout=tool_timeout,
+    )
+
+    @plan.instructions
+    def bounded_plan_evidence(ctx: RunContext[ComposerDeps]) -> str:
+        return _render_composer_evidence(
+            ctx.deps.citations.values(), excerpt_chars=ctx.deps.excerpt_chars
+        )
+
+    @plan.output_validator
+    def validate_stream_plan(
+        ctx: RunContext[ComposerDeps],
+        value: AnswerStreamPlan,
+    ) -> AnswerStreamPlan:
+        allowed = set(ctx.deps.citations)
+        selected = [
+            citation_id
+            for section in value.sections
+            if section.status == "grounded"
+            for citation_id in section.citation_ids
+        ]
+        if any(citation_id not in allowed for citation_id in selected):
+            ctx.deps.last_failure_reason = "unknown_citation"
+            raise ModelRetry("计划只能引用当前证据列表中的 citation_id。")
+        if len(selected) > ctx.deps.max_segments:
+            ctx.deps.last_failure_reason = "too_many_segments"
+            raise ModelRetry("计划引用的 segment 数量超过上限。")
+        item_ids = {ctx.deps.citations[citation_id].item_id for citation_id in selected}
+        if len(item_ids) > MAX_SOURCE_ITEMS:
+            ctx.deps.last_failure_reason = "too_many_items"
+            raise ModelRetry("计划引用的视频数量超过上限。")
+        if not ctx.deps.required_item_ids.issubset(item_ids):
+            ctx.deps.last_failure_reason = "missing_scope_item"
+            raise ModelRetry("计划遗漏了当前范围内必须覆盖的视频。")
+        return value
+
+    return plan
+
+
+def build_section_streamer(
+    model: Model | str,
+    *,
+    tool_timeout: float = 15.0,
+) -> Agent[None, str]:
+    """Build one tool-free provider text stream for a locked section."""
+
+    return Agent(
+        model,
+        deps_type=None,
+        output_type=str,
+        instructions=STREAM_SECTION_INSTRUCTIONS,
+        retries={"output": 0},
+        tool_timeout=tool_timeout,
+    )
 
 
 _COMPOSER_FAILURE_GUIDANCE: dict[str, str] = {
@@ -349,6 +461,86 @@ def _append_sources(text: str, citations: list[Citation]) -> str:
     return "\n".join(lines)
 
 
+class _StreamingTextGuard:
+    """Release safe text while retaining only dangerous marker prefixes.
+
+    This is a protocol guard, not a semantic fact verifier.  The short tail
+    prevents a URL or citation marker split across provider chunks from being
+    exposed before the complete marker is observed.
+    """
+
+    _DANGEROUS_PREFIXES = ("http://", "https://", "ftp://", "www.")
+    # ``validate_natural_answer`` rejects these only once the whole heading is
+    # present.  Keep a partial keyword at the end of a chunk so a source block
+    # split between provider deltas cannot leak its first characters.
+    _SOURCE_KEYWORDS = (
+        "参考来源",
+        "来源",
+        "references",
+        "reference",
+        "sources",
+        "source",
+    )
+
+    def __init__(self) -> None:
+        self._tail = ""
+        self._parts: list[str] = []
+
+    @staticmethod
+    def _has_forbidden_text(value: str) -> bool:
+        try:
+            validate_natural_answer(value)
+        except NaturalAnswerValidationError:
+            return True
+        return False
+
+    @classmethod
+    def _dangerous_suffix_length(cls, value: str) -> int:
+        lowered = value.lower()
+        max_length = 0
+        for prefix in cls._DANGEROUS_PREFIXES:
+            for length in range(1, min(len(prefix), len(lowered)) + 1):
+                if lowered.endswith(prefix[:length]):
+                    max_length = max(max_length, length)
+        for keyword in cls._SOURCE_KEYWORDS:
+            lowered_keyword = keyword.lower()
+            for length in range(1, min(len(lowered_keyword), len(lowered))):
+                if lowered.endswith(lowered_keyword[:length]):
+                    max_length = max(max_length, length)
+        last_open = value.rfind("[")
+        if last_open >= 0 and "]" not in value[last_open:]:
+            max_length = max(max_length, len(value) - last_open)
+        return max_length
+
+    def feed(self, delta: str) -> str:
+        if not isinstance(delta, str) or not delta:
+            return ""
+        candidate = f"{self._tail}{delta}"
+        if self._has_forbidden_text(candidate):
+            raise NaturalAnswerValidationError("unsafe streamed text")
+        hold = self._dangerous_suffix_length(candidate)
+        safe = candidate[:-hold] if hold else candidate
+        self._tail = candidate[-hold:] if hold else ""
+        if safe:
+            self._parts.append(safe)
+        return safe
+
+    def flush(self) -> str:
+        if not self._tail:
+            return ""
+        if self._has_forbidden_text(self._tail):
+            raise NaturalAnswerValidationError("unsafe streamed text")
+        value = self._tail
+        self._tail = ""
+        if value:
+            self._parts.append(value)
+        return value
+
+    @property
+    def text(self) -> str:
+        return "".join(self._parts).strip()
+
+
 class AnswerPipeline:
     """Own bounded same-evidence answer recovery."""
 
@@ -358,10 +550,297 @@ class AnswerPipeline:
         *,
         composer_model_settings: dict,
         settings: Settings,
+        stream_model: Model | str | None = None,
+        stream_plan_model: Model | str | None = None,
+        stream_tool_timeout: float = 15.0,
+        section_stream_factory: SectionStreamFactory | None = None,
     ) -> None:
         self.composer = composer
         self.composer_model_settings = composer_model_settings
         self.settings = settings
+        # The plan is a normal structured call and may use a provider/model
+        # without a streaming seam.  Keep it separate from the model that
+        # produces visible section deltas.  Falling back to ``stream_model``
+        # preserves the direct-construction compatibility path from the first
+        # implementation.
+        plan_model = stream_plan_model if stream_plan_model is not None else stream_model
+        stream_capable = (
+            stream_model is not None and model_supports_streaming(stream_model)
+        )
+        self.stream_plan = (
+            build_stream_plan(plan_model, tool_timeout=stream_tool_timeout)
+            if plan_model is not None
+            else None
+        )
+        self.section_streamer = (
+            build_section_streamer(stream_model, tool_timeout=stream_tool_timeout)
+            if stream_capable
+            else None
+        )
+        self.section_stream_factory = section_stream_factory
+
+    def streaming_available(self) -> bool:
+        """Return whether this pipeline has an explicitly injectable stream seam."""
+
+        return self.stream_plan is not None and (
+            self.section_stream_factory is not None or self.section_streamer is not None
+        )
+
+    @staticmethod
+    def _stream_citations(
+        deps: AgentDeps,
+    ) -> tuple[list[Citation], frozenset[int]]:
+        citations = [
+            citation
+            for citation in deps.citations.values()
+            if not deps.reference_scope
+            or _citation_matches_scope(citation, deps.reference_scope)
+        ]
+        required_item_ids = (
+            frozenset(citation.item_id for citation in citations)
+            if deps.reference_scope
+            else frozenset()
+        )
+        return citations, required_item_ids
+
+    @staticmethod
+    def _stream_failure(
+        request: AgentRequest,
+        code: str,
+        text: str,
+    ) -> AgentAnswer:
+        return ResponseEnvelope.failed(text=text, error_code=code).project(
+            thread_id=request.thread_public_id
+        )
+
+    async def _section_text_stream(
+        self,
+        request: AgentRequest,
+        section: PlannedSection,
+        citations: tuple[Citation, ...],
+    ) -> AsyncIterator[str]:
+        if self.section_stream_factory is not None:
+            async for value in self.section_stream_factory(
+                request.question.strip(), section, citations
+            ):
+                yield value
+            return
+        if self.section_streamer is None:
+            raise ProviderStreamingUnavailable
+        evidence = _render_composer_evidence(citations, excerpt_chars=360)
+        prompt = (
+            f"用户问题：{request.question.strip()}\n"
+            f"当前 section 任务：{section.task}\n"
+            f"锁定来源（只能依据这些来源）：\n{evidence}"
+        )
+        async with self.section_streamer.run_stream(
+            prompt,
+            usage_limits=UsageLimits(
+                request_limit=1,
+                output_tokens_limit=self.settings.agent_output_token_limit,
+            ),
+            usage=RunUsage(),
+            model_settings=dict(self.composer_model_settings),
+        ) as result:
+            async for delta in result.stream_text(delta=True, debounce_by=None):
+                yield delta
+
+    async def stream_answer(
+        self,
+        request: AgentRequest,
+        deps: AgentDeps,
+        diagnostics: RequestDiagnostics,
+    ) -> AsyncIterator[AgentStreamEvent]:
+        """Stream a citation-first answer through one controlled execution.
+
+        The plan is fully structured and allow-listed before a section starts.
+        Section text is then streamed only from a locked, tool-free provider
+        seam.  The final envelope remains the only authoritative answer.
+        """
+
+        citations, required_item_ids = self._stream_citations(deps)
+        if not citations:
+            if deps.successful_searches and not deps.pending_read_failures and not deps.read_recovery_exhausted:
+                execution = self.no_evidence(request, diagnostics, deps.actions.read_action_results)
+                yield AgentStreamEvent(
+                    "completed", request.request_id, request.message_id,
+                    answer=execution.answer, new_messages=tuple(execution.new_messages),
+                )
+                return
+            answer = self._stream_failure(request, "answer_unavailable", "暂时无法生成可靠回答，请稍后重试。")
+            yield AgentStreamEvent("completed", request.request_id, request.message_id, answer=answer)
+            return
+        if not self.streaming_available() or self.stream_plan is None:
+            raise ProviderStreamingUnavailable
+
+        composer_deps = ComposerDeps(
+            {citation.segment_id: citation for citation in citations},
+            diagnostics=diagnostics,
+            required_item_ids=required_item_ids,
+            max_segments=COMPRESSED_EVIDENCE_LIMIT,
+        )
+        diagnostics.event("model_attempt", call_index=1, agent_phase="answer")
+        try:
+            async with asyncio.timeout(self.settings.agent_timeout_seconds):
+                plan_result = await self.stream_plan.run(
+                    request.question.strip(),
+                    deps=composer_deps,
+                    usage_limits=UsageLimits(
+                        request_limit=1,
+                        output_tokens_limit=self.settings.agent_output_token_limit,
+                    ),
+                    usage=RunUsage(),
+                    model_settings=dict(self.composer_model_settings),
+                )
+        except asyncio.CancelledError:
+            answer = self._stream_failure(request, "cancelled", "请求已取消。")
+            yield AgentStreamEvent("completed", request.request_id, request.message_id, answer=answer)
+            return
+        except TimeoutError:
+            # No public section has started yet.  Let the orchestrator use
+            # the already-safe whole-answer compatibility path once.
+            raise ProviderStreamingUnavailable from None
+        except Exception:
+            # A validator failure records an allow-list reason and must fail
+            # closed.  Transport/provider failures without such a reason can
+            # safely fall back before any section text is public.
+            if composer_deps.last_failure_reason is None:
+                raise ProviderStreamingUnavailable from None
+            answer = self._stream_failure(
+                request, "answer_unavailable", "暂时无法生成可靠回答，请稍后重试。"
+            )
+            yield AgentStreamEvent(
+                "completed", request.request_id, request.message_id, answer=answer
+            )
+            return
+
+        plan = plan_result.output
+        selected_by_id = {citation.segment_id: citation for citation in citations}
+        rendered_sections: list[GroundedResponseSection | UnsupportedResponseSection] = []
+        selected: list[Citation] = []
+        open_section: str | None = None
+        public_section_started = False
+        try:
+            for index, planned in enumerate(plan.sections, start=1):
+                section_id = f"section-{index}"
+                ids = tuple(planned.citation_ids)
+                section_citations = tuple(selected_by_id[citation_id] for citation_id in ids)
+                selected.extend(section_citations)
+                if planned.status == "unsupported":
+                    open_section = section_id
+                    public_section_started = True
+                    yield AgentStreamEvent(
+                        "section_started", request.request_id, request.message_id,
+                        section_id=section_id, status=planned.status,
+                        citation_ids=ids, citations=section_citations,
+                    )
+                    text = UNSUPPORTED_EVIDENCE_TEXT
+                    yield AgentStreamEvent(
+                        "text_delta", request.request_id, request.message_id,
+                        section_id=section_id, text=text,
+                    )
+                    rendered_sections.append(UnsupportedResponseSection("unsupported"))
+                else:
+                    guard = _StreamingTextGuard()
+                    stream = self._section_text_stream(request, planned, section_citations)
+                    stream_iterator = stream.__aiter__()
+                    first_safe_delta: str | None = None
+                    while first_safe_delta is None:
+                        try:
+                            delta = await anext(stream_iterator)
+                        except StopAsyncIteration:
+                            tail = guard.flush()
+                            if tail:
+                                first_safe_delta = tail
+                                break
+                            if not public_section_started:
+                                raise ProviderStreamingUnavailable(
+                                    "provider produced no safe streaming delta"
+                                )
+                            raise RuntimeError("provider produced no safe streaming delta")
+                        except (NotImplementedError, ValueError) as exc:
+                            if (
+                                not public_section_started
+                                and _is_provider_stream_unavailable_error(exc)
+                            ):
+                                raise ProviderStreamingUnavailable from exc
+                            raise
+                        safe_delta = guard.feed(delta)
+                        if safe_delta:
+                            first_safe_delta = safe_delta
+                    open_section = section_id
+                    public_section_started = True
+                    yield AgentStreamEvent(
+                        "section_started", request.request_id, request.message_id,
+                        section_id=section_id, status=planned.status,
+                        citation_ids=ids, citations=section_citations,
+                    )
+                    yield AgentStreamEvent(
+                        "text_delta", request.request_id, request.message_id,
+                        section_id=section_id, text=first_safe_delta,
+                    )
+                    async for delta in stream_iterator:
+                        safe_delta = guard.feed(delta)
+                        if safe_delta:
+                            yield AgentStreamEvent(
+                                "text_delta", request.request_id, request.message_id,
+                                section_id=section_id, text=safe_delta,
+                            )
+                    tail = guard.flush()
+                    if tail:
+                        yield AgentStreamEvent(
+                            "text_delta", request.request_id, request.message_id,
+                            section_id=section_id, text=tail,
+                        )
+                    validated = validate_natural_answer(guard.text)
+                    rendered_sections.append(
+                        GroundedResponseSection("grounded", validated.text, ids)
+                    )
+                yield AgentStreamEvent(
+                    "section_completed", request.request_id, request.message_id,
+                    section_id=section_id, status=planned.status,
+                )
+                open_section = None
+            envelope = ResponseEnvelope.grounded(
+                sections=rendered_sections,
+                citations=selected,
+                action_results=deps.actions.read_action_results,
+            )
+            execution = AgentExecution(
+                envelope.project(thread_id=request.thread_public_id),
+                _canonical_history(request.question, envelope.project(thread_id=request.thread_public_id).text),
+            )
+            diagnostics.event("citation_validated", result_count=len(selected), agent_phase="answer")
+            yield AgentStreamEvent(
+                "completed", request.request_id, request.message_id,
+                answer=execution.answer, new_messages=tuple(execution.new_messages),
+            )
+        except ProviderStreamingUnavailable:
+            raise
+        except asyncio.CancelledError:
+            if open_section is not None:
+                yield AgentStreamEvent(
+                    "section_aborted", request.request_id, request.message_id,
+                    section_id=open_section, reason="cancelled",
+                )
+            answer = self._stream_failure(request, "cancelled", "请求已取消。")
+            yield AgentStreamEvent("completed", request.request_id, request.message_id, answer=answer)
+        except TimeoutError:
+            if open_section is not None:
+                yield AgentStreamEvent(
+                    "section_aborted", request.request_id, request.message_id,
+                    section_id=open_section, reason="timeout",
+                )
+            answer = self._stream_failure(request, "timeout", "请求超时，请稍后重试。")
+            yield AgentStreamEvent("completed", request.request_id, request.message_id, answer=answer)
+        except Exception:
+            if open_section is not None:
+                yield AgentStreamEvent(
+                    "section_aborted", request.request_id, request.message_id,
+                    section_id=open_section, reason="provider_failure",
+                )
+            answer = self._stream_failure(request, "answer_unavailable", "暂时无法生成可靠回答，请稍后重试。")
+            yield AgentStreamEvent("completed", request.request_id, request.message_id, answer=answer)
 
     async def recover_answer(
         self,

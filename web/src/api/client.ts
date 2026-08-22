@@ -17,6 +17,7 @@ import type {
   SessionInfo,
   TranscriptPage,
   ConversationHistoryPage,
+  ConversationCitation,
   ConversationResponse,
   ConversationStreamEvent,
   ConversationTurns,
@@ -246,7 +247,10 @@ function streamErrorPayload(response: Response): Promise<{ code: string; message
 const STREAM_EVENT_TYPES = new Set([
   "started",
   "activity",
+  "section_started",
   "text_delta",
+  "section_completed",
+  "section_aborted",
   "completed",
   "error",
   "cancelled",
@@ -254,6 +258,7 @@ const STREAM_EVENT_TYPES = new Set([
 const STREAM_ACTIVITY_VALUES = new Set([
   "preparing",
   "retrieving",
+  "planning_answer",
   "composing",
   "completed",
   "failed",
@@ -269,6 +274,11 @@ const STREAM_EVENT_KEYS = new Set([
   "response",
   "error_code",
   "message",
+  "section_id",
+  "status",
+  "citation_ids",
+  "citations",
+  "reason",
 ]);
 
 function isConversationResponse(value: unknown): value is ConversationResponse {
@@ -310,8 +320,33 @@ function isStreamEvent(value: unknown): value is ConversationStreamEvent {
       || (typeof event.activity === "string" && STREAM_ACTIVITY_VALUES.has(event.activity)))
     && (event.text === undefined || event.text === null || typeof event.text === "string")
     && (event.message === undefined || event.message === null || typeof event.message === "string")
+    && (event.section_id === undefined
+      || event.section_id === null
+      || (typeof event.section_id === "string" && event.section_id.length > 0 && event.section_id.length <= 64))
+    && (event.status === undefined
+      || event.status === null
+      || event.status === "grounded"
+      || event.status === "unsupported")
+    && (event.citation_ids === undefined
+      || (Array.isArray(event.citation_ids)
+        && event.citation_ids.every((id) => typeof id === "number" && Number.isInteger(id) && id > 0)))
+    && (event.citations === undefined
+      || (Array.isArray(event.citations)
+        && event.citations.every((citation) => isConversationCitation(citation))))
+    && (event.reason === undefined
+      || event.reason === null
+      || ["provider_failure", "timeout", "cancelled"].includes(event.reason))
     && (event.response === undefined || event.response === null || isConversationResponse(event.response))
   );
+}
+
+function isConversationCitation(value: unknown): value is ConversationCitation {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const citation = value as Partial<ConversationCitation>;
+  return typeof citation.title === "string"
+    && typeof citation.excerpt === "string"
+    && typeof citation.url === "string"
+    && (citation.start_sec === undefined || citation.start_sec === null || typeof citation.start_sec === "number");
 }
 
 function isAbortError(error: unknown): boolean {
@@ -406,6 +441,12 @@ export async function streamConversationMessage(
   let completed: ConversationResponse | null = null;
   let terminal = false;
   let started = false;
+  let openSectionId: string | null = null;
+  let sectionLifecycleSeen = false;
+  let sectionAborted = false;
+  const sectionIds = new Set<string>();
+  const citationIds = new Set<number>();
+  const sectionStatuses = new Map<string, "grounded" | "unsupported">();
   let shouldCancelReader = true;
   let readerDone = false;
 
@@ -434,12 +475,76 @@ export async function streamConversationMessage(
     if (raw.type === "text_delta" && typeof raw.text !== "string") {
       throw new ConversationStreamError("stream_protocol_error", "流式文本增量无效");
     }
-    if (raw.type === "completed" && !isConversationResponse(raw.response)) {
-      throw new ConversationStreamError("stream_protocol_error", "流式响应缺少最终答案");
+    const sectionId = raw.section_id ?? null;
+    const ids = raw.citation_ids ?? [];
+    const sources = raw.citations ?? [];
+    if (raw.type === "section_started") {
+      if (!sectionId || !raw.status || openSectionId !== null || sectionIds.has(sectionId)) {
+        throw new ConversationStreamError("stream_protocol_error", "流式分段开始事件无效");
+      }
+      if (raw.status === "grounded" && ids.length === 0) {
+        throw new ConversationStreamError("stream_protocol_error", "流式分段缺少来源");
+      }
+      if (raw.status === "unsupported" && ids.length > 0) {
+        throw new ConversationStreamError("stream_protocol_error", "证据不足分段不得携带来源");
+      }
+      if (new Set(ids).size !== ids.length || sources.length !== ids.length) {
+        throw new ConversationStreamError("stream_protocol_error", "流式分段来源无效");
+      }
+      if (ids.some((id) => citationIds.has(id))) {
+        throw new ConversationStreamError("stream_protocol_error", "流式分段重复来源");
+      }
+      sectionLifecycleSeen = true;
+      openSectionId = sectionId;
+      sectionIds.add(sectionId);
+      sectionStatuses.set(sectionId, raw.status);
+      ids.forEach((id) => citationIds.add(id));
+    } else if (raw.type === "text_delta") {
+      if (sectionLifecycleSeen) {
+        if (!sectionId || sectionId !== openSectionId) {
+          throw new ConversationStreamError("stream_protocol_error", "流式文本分段标识无效");
+        }
+      } else if (sectionId !== null) {
+        throw new ConversationStreamError("stream_protocol_error", "流式文本缺少分段开始事件");
+      }
+    } else if (raw.type === "section_completed") {
+      if (
+        !sectionLifecycleSeen
+        || !sectionId
+        || sectionId !== openSectionId
+        || raw.status === undefined
+        || raw.status === null
+        || raw.status !== sectionStatuses.get(sectionId)
+      ) {
+        throw new ConversationStreamError("stream_protocol_error", "流式分段完成事件无效");
+      }
+      openSectionId = null;
+    } else if (raw.type === "section_aborted") {
+      if (
+        !sectionLifecycleSeen
+        || !sectionId
+        || sectionId !== openSectionId
+        || !raw.reason
+      ) {
+        throw new ConversationStreamError("stream_protocol_error", "流式分段中断事件无效");
+      }
+      openSectionId = null;
+      sectionAborted = true;
+    } else if (raw.type === "completed" || raw.type === "error" || raw.type === "cancelled") {
+      if (openSectionId !== null) {
+        throw new ConversationStreamError("stream_protocol_error", "流式响应仍有未完成分段");
+      }
+      if (raw.type === "completed" && sectionAborted) {
+        throw new ConversationStreamError("stream_protocol_error", "中断的流式响应不得成功完成");
+      }
     }
     lastSequence = raw.sequence;
     if (raw.type === "completed") {
-      completed = raw.response;
+      const completedResponse = raw.response;
+      if (!isConversationResponse(completedResponse)) {
+        throw new ConversationStreamError("stream_protocol_error", "流式响应缺少最终答案");
+      }
+      completed = completedResponse;
       terminal = true;
     } else if (raw.type === "error" || raw.type === "cancelled") {
       terminal = true;

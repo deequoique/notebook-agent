@@ -62,6 +62,9 @@ Components are plain function components. Pages orchestrate queries and mutation
   may create clickable source anchors.
 - Remove the deterministic appended text-source block before Markdown parsing,
   then render structured citation cards as adjacent semantic content.
+- Citation cards show the server-owned title, link, and timestamp by default;
+  subtitle/excerpt text remains inside a collapsed native `<details>` block and
+  is expanded only by the user's keyboard or pointer action.
 - Scope answer typography beneath `.chat-markdown`. Plain historical text must
   remain readable without migration.
 
