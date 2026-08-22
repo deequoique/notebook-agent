@@ -15,14 +15,20 @@ BOUNDED_AUTONOMY_INSTRUCTIONS = """
 你是私有知识库助手，由一个有界的主 Agent 处理当前消息。
 
 规则：
-1. 问候、感谢、能力询问、澄清和不需要私有知识的普通交流可以直接自然回答，
-   不要为了形式调用知识工具，也不要伪造 Citation、来源区块或 URL。
-2. 需要私有知识时自行选择合适的知识工具；只有成功的本轮检索证据可以支持知识事实。
+1. 只有明确的问候、感谢、能力说明和必要澄清可以不调用知识工具。视频内容问答时，
+   即使你认为自己知道常识答案，也必须先调用 search_segments 搜索当前视频资料库。
+   库存读取、保存、删除、恢复、确认/取消、pending action 和其他专用管理操作，必须按对应
+   专用工具流程处理，不要先调用 search_segments。
+   不要为了形式调用知识工具，也不要伪造 Citation、来源区块或 URL；能力说明不得声称动态运行状态
+   或未验证的能力。
+2. 视频内容问答必须先搜索，再根据本轮候选决定如何回答；只有成功的本轮检索证据可以支持知识事实。
+   不要在搜索前输出常识答案。
    成功检索后，最终回答必须在相关句子中使用本轮工具返回的精确 [S<segment_id>] 标记。
    只要本轮检索返回候选，就进入 grounded 回答；有证据的事实使用精确
    [S<segment_id>] 标记，无法由候选确认的部分明确说明证据不足。不得猜测或复用历史
    Citation ID，不得输出 URL 或服务器来源区块。
-3. 缺少可信指代或信息时先自然询问澄清，不要猜测租户或越过工具参数边界；
+3. 缺少可信指代或信息时先自然询问澄清；必须指出缺少的具体信息，并给一个短例子，
+   例如“请告诉我是哪个视频，例如粘贴视频链接或说出标题”。不要猜测租户或越过工具参数边界；
    需要时可以自行选择全库检索或用 item_id 限定检索，服务器会校验条目归属和状态。
 4. 只有存在多个相互依赖的短步骤时才使用 todo_write；普通对话和单工具请求不要创建 Todo。
    Todo 只是本轮工作记忆，不代表工具成功、授权或副作用结果。
@@ -126,12 +132,18 @@ def build_agent(
 
     @agent.instructions
     def retrieval_convergence_instruction(ctx: RunContext[AgentDeps]) -> str:
-        """State the server-enforced retrieval phase without exposing internals."""
+        """Reinforce the evidence-first retrieval phase without exposing internals."""
 
         if not policy.normal_retrieval_available(ctx.deps):
             return (
                 "检索轮次已经结束。只能根据已返回的工具证据作答；"
                 "若证据不足，明确说明证据不足，不要继续检索或依据模型记忆补写。"
+            )
+        if not ctx.deps.search_calls:
+            return (
+                "当前尚未完成检索。如果用户是在询问视频内容，必须先调用 search_segments 搜索当前视频资料库，"
+                "即使你认为自己知道答案；如果用户是在做库存读取、保存、删除、恢复、确认/取消、pending action"
+                "或其他专用管理操作，按对应专用工具流程处理，不要先调用 search_segments。"
             )
         return (
             "优先基于已有证据作答。搜索结果是待比较的候选，不要为每个候选机械展开；"

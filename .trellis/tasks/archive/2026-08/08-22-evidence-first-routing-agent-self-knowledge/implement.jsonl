@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/agent-retrieval-convergence.md","reason":"主 Agent evidence-first prompt、现有 grounded/no-evidence 流程与无服务器 enforcement 决策"}
+{"file":".trellis/spec/backend/provider-tls-diagnostics.md","reason":"确认本任务不新增 search-required enforcement 或诊断状态"}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"确认新增回归不记录问题、回答或工具内容"}
+{"file":".trellis/tasks/08-22-evidence-first-routing-agent-self-knowledge/research/current-routing-and-self-knowledge-gap.md","reason":"现场行为背景；实现仅采用 prompt 调整，不采用文档中的服务器兜底建议"}
